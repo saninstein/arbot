@@ -1,0 +1,16 @@
+[package]
+name = "untitled"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio-tungstenite = "*"
+tungstenite = { version = "*", features = ["native-tls"] }
+url = "*"
+env_logger = "*"
+log = "*"
+json = "*"
+crossbeam-queue = "*"
+petgraph = "*"
+itertools = "*"
+uuid = { version = "1.10.0", features = ["v4"] }
