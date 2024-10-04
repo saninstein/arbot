@@ -1,10 +1,10 @@
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 use crate::core::dto::Instrument;
 
 #[derive(Debug)]
 pub struct InstrumentsMap {
-    pub map: HashMap<String, Rc<Instrument>>,
+    pub map: HashMap<String, Arc<Instrument>>,
 }
 
 impl InstrumentsMap {
@@ -17,7 +17,7 @@ impl InstrumentsMap {
 
             map.insert(
                 symbol.clone(),
-                Rc::new(Instrument {
+                Arc::new(Instrument {
                     symbol: symbol.clone(),
                     base: base.to_string(),
                     quote: quote.to_string(),

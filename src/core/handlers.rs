@@ -1,13 +1,12 @@
 use std::collections::HashMap;
-use log;
 use petgraph::Graph;
 use petgraph::graph::NodeIndex;
 use petgraph::algo::find_negative_cycle;
 use crate::{
     core::api::PriceTickerListener,
     core::dto::PriceTicker,
+    core::utils::time
 };
-use crate::core::utils::time;
 
 pub struct PriceTickerFilter {
     listeners: Vec<Box<dyn PriceTickerListener>>,
@@ -24,7 +23,7 @@ impl PriceTickerFilter {
 
     fn update_and_notify_listeners(&mut self, price_ticker: &PriceTicker) {
         self.latest_map.insert(price_ticker.instrument.symbol.clone(), price_ticker.copy());
-        let keys = self.latest_map.len();
+        // let keys = self.latest_map.len();
         // log::info!("Symbols: {keys}");
         for listener in self.listeners.iter_mut() {
             listener.on_price_ticker(price_ticker);
@@ -47,11 +46,12 @@ impl PriceTickerListener for PriceTickerFilter {
     }
 }
 
+#[allow(dead_code)]
 struct DummyPriceTickerListener {}
 
 impl PriceTickerListener for DummyPriceTickerListener {
     fn on_price_ticker(&mut self, price_ticker: &PriceTicker) {
-        // log::info!("Dummy listener: {price_ticker:?}")
+        log::info!("Dummy listener: {price_ticker:?}")
     }
 }
 
@@ -72,6 +72,12 @@ impl ArbStatPriceTickerListener {
             next_check_ts: 0,
             fee: 0.001 // 0.1% trading fee
         }
+    }
+
+    pub fn reset(&mut self) {
+        self.graph.clear();
+        self.symbol_to_node_map.clear();
+        self.node_to_symbol_map.clear();
     }
 
     pub fn get_node_by_symbol(&mut self, symbol: String) -> NodeIndex {
@@ -98,20 +104,24 @@ impl ArbStatPriceTickerListener {
             }
         }
 
-        return (1.0 - cycle_sum.exp()) * 100.0;;
+        return (1.0 - cycle_sum.exp()) * 100.0;
     }
 
     pub fn find_arb_path(&self, symbol: &str) {
         let node_id = self.symbol_to_node_map.get(symbol).unwrap();
         match find_negative_cycle(&self.graph, node_id.clone()) {
-            Some(mut vec) => {
-                if vec.last().unwrap() == node_id {
-                    let mut path = vec![node_id.clone()];
-                    path.append(&mut vec);
+            Some(vec) => {
+                if vec.contains(node_id)  {
+                    let pos = vec.iter().position(|x| x == node_id).unwrap();
+                    let mut path = Vec::new();
+
+                    path.extend_from_slice(&vec[pos..]);
+                    path.extend_from_slice(&vec[..pos]);
+                    path.push(node_id.clone());
 
                     let res = path.iter().map(|&node_index| { self.node_to_symbol_map.get(&node_index).unwrap().as_str() }).collect::<Vec<&str>>().join("->");
-                    let profit = self.calculate_path_profit(&vec);
-                    log::info!("Negative cycle found {res} profit {profit}%");
+                    let profit = self.calculate_path_profit(&path);
+                    log::info!("Arb found {res} profit {profit}%");
                 }
             }
             _ => {
@@ -136,17 +146,18 @@ impl PriceTickerListener for ArbStatPriceTickerListener {
             return;
         }
 
-        let mut ts = time();
+        // let mut ts = time();
 
         // TODO: arb oportunity persistance
 
-        for symbol in vec!["USDT", "USDC", "DAI", "BNB", "FDUSD"] {
+        // for symbol in vec!["USDT", "USDC", "DAI", "BNB", "FDUSD"] {
+        for symbol in vec!["USDT"] {
             if self.symbol_to_node_map.contains_key(symbol) {
                 self.find_arb_path(symbol);
             }
         }
 
-        ts = time() - ts;
+        // ts = time() - ts;
         // log::info!("Calculated: {ts}");
 
         self.next_check_ts = time() + 5;
