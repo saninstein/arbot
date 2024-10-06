@@ -8,7 +8,7 @@ pub struct InstrumentsMap {
 }
 
 impl InstrumentsMap {
-    pub fn from_array_string(symbols: Vec<&str>) -> Self {
+    pub fn from_array_string(symbols: Vec<String>) -> Self {
         let mut map = HashMap::new();
 
         for s in symbols {

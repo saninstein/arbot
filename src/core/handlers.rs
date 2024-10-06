@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 use petgraph::Graph;
 use petgraph::graph::NodeIndex;
 use petgraph::algo::find_negative_cycle;
@@ -23,8 +24,8 @@ impl PriceTickerFilter {
 
     fn update_and_notify_listeners(&mut self, price_ticker: &PriceTicker) {
         self.latest_map.insert(price_ticker.instrument.symbol.clone(), price_ticker.copy());
-        // let keys = self.latest_map.len();
-        // log::info!("Symbols: {keys}");
+        let keys = self.latest_map.len();
+        log::info!("Symbols: {keys}");
         for listener in self.listeners.iter_mut() {
             listener.on_price_ticker(price_ticker);
         }
@@ -160,7 +161,7 @@ impl PriceTickerListener for ArbStatPriceTickerListener {
         // ts = time() - ts;
         // log::info!("Calculated: {ts}");
 
-        self.next_check_ts = time() + 5;
+        self.next_check_ts = time() + Duration::from_millis(5).as_nanos();
 
         // println!("{}", Dot::new(&self.graph));
     }
