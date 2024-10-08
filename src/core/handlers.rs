@@ -1,40 +1,44 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 use petgraph::Graph;
 use petgraph::graph::NodeIndex;
 use petgraph::algo::find_negative_cycle;
+use crate::core::dto::{MonitoringEntity, MonitoringMessage, MonitoringStatus, OrderSide, OrderType};
 use crate::{
     core::api::PriceTickerListener,
     core::dto::PriceTicker,
-    core::utils::time
+    core::utils::time,
 };
+use crate::core::api::{BaseStrategy, MonitoringMessageListener};
+use crate::core::dto::{Instrument, Order, OrderStatus};
+use crate::core::oes::OrderExecutionSimulator;
 
 pub struct PriceTickerFilter {
-    listeners: Vec<Box<dyn PriceTickerListener>>,
-    latest_map: HashMap<String, PriceTicker>,
+    pub listeners: Vec<Box<dyn BaseStrategy>>,
+    tickers_map: HashMap<Arc<Instrument>, PriceTicker>
 }
 
 impl PriceTickerFilter {
-    pub(crate) fn new(listeners: Vec<Box<dyn PriceTickerListener>>) -> Self {
-        Self {
-            listeners,
-            latest_map: HashMap::new(),
-        }
+    pub fn new(listeners: Vec<Box<dyn BaseStrategy>>) -> Self {
+        Self { tickers_map: Default::default(), listeners }
     }
 
     fn update_and_notify_listeners(&mut self, price_ticker: &PriceTicker) {
-        self.latest_map.insert(price_ticker.instrument.symbol.clone(), price_ticker.copy());
-        let keys = self.latest_map.len();
-        log::info!("Symbols: {keys}");
+        self.tickers_map.insert(Arc::clone(&price_ticker.instrument), price_ticker.copy());
+        // let keys = self.tickers_map.len();
+        // log::info!("Symbols: {keys}");
         for listener in self.listeners.iter_mut() {
-            listener.on_price_ticker(price_ticker);
+            listener.on_price_ticker(price_ticker, &self.tickers_map);
         }
     }
 }
 
 impl PriceTickerListener for PriceTickerFilter {
-    fn on_price_ticker(&mut self, price_ticker: &PriceTicker) {
-        match self.latest_map.get(&price_ticker.instrument.symbol) {
+    fn on_price_ticker(&mut self, price_ticker: &PriceTicker, _: &HashMap<Arc<Instrument>, PriceTicker>) {
+        match self.tickers_map.get(&price_ticker.instrument) {
             Some(p) => {
                 if !p.is_prices_equals(price_ticker) {
                     self.update_and_notify_listeners(price_ticker)
@@ -47,122 +51,23 @@ impl PriceTickerListener for PriceTickerFilter {
     }
 }
 
+impl MonitoringMessageListener for PriceTickerFilter {
+    fn on_monitoring_message(&mut self, message: &MonitoringMessage) {
+        match message.entity {
+            MonitoringEntity::PRICE_TICKER => match message.status {
+                MonitoringStatus::ERROR => self.tickers_map.clear(),
+                _ => {}
+            }
+            _ => {}
+        }
+    }
+}
+
 #[allow(dead_code)]
 struct DummyPriceTickerListener {}
 
 impl PriceTickerListener for DummyPriceTickerListener {
-    fn on_price_ticker(&mut self, price_ticker: &PriceTicker) {
+    fn on_price_ticker(&mut self, price_ticker: &PriceTicker, _: &HashMap<Arc<Instrument>, PriceTicker>) {
         log::info!("Dummy listener: {price_ticker:?}")
-    }
-}
-
-pub struct ArbStatPriceTickerListener {
-    graph: Graph::<String, f64>,
-    symbol_to_node_map: HashMap<String, NodeIndex>,
-    node_to_symbol_map: HashMap<NodeIndex, String>,
-    next_check_ts: u128,
-    fee: f64
-}
-
-impl ArbStatPriceTickerListener {
-    pub fn new() -> Self {
-        Self {
-            graph: Graph::new(),
-            symbol_to_node_map: Default::default(),
-            node_to_symbol_map: Default::default(),
-            next_check_ts: 0,
-            fee: 0.001 // 0.1% trading fee
-        }
-    }
-
-    pub fn reset(&mut self) {
-        self.graph.clear();
-        self.symbol_to_node_map.clear();
-        self.node_to_symbol_map.clear();
-    }
-
-    pub fn get_node_by_symbol(&mut self, symbol: String) -> NodeIndex {
-        match self.symbol_to_node_map.get(&symbol as &str) {
-            Some(node) => {
-                node.clone()
-            }
-            _ => {
-                let node = self.graph.add_node(symbol.clone());
-                self.symbol_to_node_map.insert(symbol.clone(), node.clone());
-                self.node_to_symbol_map.insert(node, symbol);
-                node.clone()
-            }
-        }
-    }
-
-    pub fn calculate_path_profit(&self, path: &Vec<NodeIndex>) -> f64 {
-        let mut cycle_sum = 0.0;
-        for i in 0..path.len() {
-            let u = path[i];
-            let v = path[(i + 1) % path.len()];
-            if let Some(edge) = self.graph.find_edge(u, v) {
-                cycle_sum += self.graph.edge_weight(edge).unwrap();
-            }
-        }
-
-        return (1.0 - cycle_sum.exp()) * 100.0;
-    }
-
-    pub fn find_arb_path(&self, symbol: &str) {
-        let node_id = self.symbol_to_node_map.get(symbol).unwrap();
-        match find_negative_cycle(&self.graph, node_id.clone()) {
-            Some(vec) => {
-                if vec.contains(node_id)  {
-                    let pos = vec.iter().position(|x| x == node_id).unwrap();
-                    let mut path = Vec::new();
-
-                    path.extend_from_slice(&vec[pos..]);
-                    path.extend_from_slice(&vec[..pos]);
-                    path.push(node_id.clone());
-
-                    let res = path.iter().map(|&node_index| { self.node_to_symbol_map.get(&node_index).unwrap().as_str() }).collect::<Vec<&str>>().join("->");
-                    let profit = self.calculate_path_profit(&path);
-                    log::info!("Arb found {res} profit {profit}%");
-                }
-            }
-            _ => {
-                // println!("Negative cycle not found for {symbol}");
-            }
-        }
-    }
-}
-
-impl PriceTickerListener for ArbStatPriceTickerListener {
-    fn on_price_ticker(&mut self, price_ticker: &PriceTicker) {
-        let base = self.get_node_by_symbol(price_ticker.instrument.base.clone());
-        let quote = self.get_node_by_symbol(price_ticker.instrument.quote.clone());
-
-        let effective_bid = price_ticker.bid * (1.0 - self.fee); // Adjust bid price (selling base)
-        let effective_ask = price_ticker.ask * (1.0 + self.fee); // Adjust ask price (buying base)
-
-        self.graph.update_edge(base, quote, -effective_bid.ln());
-        self.graph.update_edge(quote, base, -(1. / effective_ask).ln());
-
-        if self.next_check_ts > time() {
-            return;
-        }
-
-        // let mut ts = time();
-
-        // TODO: arb oportunity persistance
-
-        // for symbol in vec!["USDT", "USDC", "DAI", "BNB", "FDUSD"] {
-        for symbol in vec!["USDT"] {
-            if self.symbol_to_node_map.contains_key(symbol) {
-                self.find_arb_path(symbol);
-            }
-        }
-
-        // ts = time() - ts;
-        // log::info!("Calculated: {ts}");
-
-        self.next_check_ts = time() + Duration::from_millis(5).as_nanos();
-
-        // println!("{}", Dot::new(&self.graph));
     }
 }

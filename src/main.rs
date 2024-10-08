@@ -3,14 +3,19 @@ mod draft;
 
 use std::sync::Arc;
 use std::{panic, process, thread};
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::time::Duration;
 use crossbeam_queue::ArrayQueue;
 use itertools::Itertools;
 use core::api::PriceTickerListener;
-use core::handlers::{ArbStatPriceTickerListener, PriceTickerFilter};
+use core::handlers::PriceTickerFilter;
 use core::map::InstrumentsMap;
-use crate::core::streams::{dump_freq, PriceTickerStream};
+use crate::core::api::MonitoringMessageListener;
+use crate::core::dto::{Instrument, PriceTicker, DTO};
+use crate::core::strategies::ArbStrategy;
+use crate::core::streams::{PriceTickerStream};
 use crate::core::utils::{init_logger, read_tickers};
 
 fn main() {
@@ -24,6 +29,7 @@ fn main() {
     }));
 
     let tickers_groups = read_tickers("tickers.json".to_string());
+    // let tickers_groups = vec![vec!["BTC/USDT".to_string(), "ETH/USDT".to_string()],];
     let symbols =  tickers_groups.clone().into_iter().flat_map(|inner| inner.into_iter()).collect();
     let queue = Arc::new(ArrayQueue::new(100_000));
     let instruments_map = Arc::new(InstrumentsMap::from_array_string(symbols));
@@ -36,14 +42,35 @@ fn main() {
     );
 
     log::info!("Sockets: {sockets}");
-
-
-    let mut price_ticker_filter = PriceTickerFilter::new(vec![Box::new(ArbStatPriceTickerListener::new())]);
+    let empty_map = Default::default();
+    let mut price_ticker_filter = PriceTickerFilter::new(
+        vec![Box::new(ArbStrategy::new())],
+    );
 
     loop {
         match queue.pop() {
-            Some(price_ticker) => {
-                price_ticker_filter.on_price_ticker(&price_ticker);
+            Some(dto) => {
+                match dto {
+                    DTO::PriceTicker(price_ticker) => {
+                        price_ticker_filter.on_price_ticker(&price_ticker, &empty_map);
+                    },
+                    DTO::Order(order) => {
+                        for mut l in &mut price_ticker_filter.listeners {
+                            l.on_order(&order);
+                        }
+                    },
+                    DTO::Balance(balance) => {
+                        for mut l in &mut price_ticker_filter.listeners {
+                            l.on_balance(&balance);
+                        }
+                    },
+                    DTO::MonitoringMessage(msg) => {
+                        price_ticker_filter.on_monitoring_message(&msg);
+                        for mut l in &mut price_ticker_filter.listeners {
+                            l.on_monitoring_message(&msg);
+                        }
+                    }
+                }
             }
             None => {
                 // log::info!("Empty queue");

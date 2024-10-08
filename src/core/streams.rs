@@ -8,22 +8,27 @@ use std::time::Duration;
 use crossbeam_queue::ArrayQueue;
 use itertools::Itertools;
 use json::{object, JsonValue};
+use petgraph::matrix_graph::Nullable;
 use tungstenite::stream::{MaybeTlsStream, NoDelay};
 use tungstenite::{connect, Error, Message, WebSocket};
+use tungstenite::http::StatusCode;
+use tungstenite::protocol::CloseFrame;
 use crate::core::{
     dto::PriceTicker,
     map::InstrumentsMap,
     utils::{parse_f64_field, time},
 };
+use crate::core::dto::{MonitoringEntity, MonitoringMessage, MonitoringStatus, DTO};
 
 #[allow(dead_code)]
 pub struct PriceTickerStream {
-    queue: Arc<ArrayQueue<PriceTicker>>,
+    entity_id: usize,
+    queue: Arc<ArrayQueue<DTO>>,
     instruments_map: Arc<InstrumentsMap>,
     channels: Vec<String>,
     channels_per_request: usize,
 
-    socket: WebSocket<MaybeTlsStream<TcpStream>>,
+    socket: Option<WebSocket<MaybeTlsStream<TcpStream>>>,
 
     request_latency: u64,
     request_latest_ts: Arc<RwLock<u128>>,
@@ -33,27 +38,34 @@ pub struct PriceTickerStream {
 #[allow(dead_code)]
 impl PriceTickerStream {
     pub fn new(
-        queue: Arc<ArrayQueue<PriceTicker>>,
+        entity_id: usize,
+        queue: Arc<ArrayQueue<DTO>>,
         channels: Vec<String>,
         instruments_map: Arc<InstrumentsMap>,
         channels_per_request: usize,
         request_latency: u64,
         request_latest_ts: Arc<RwLock<u128>>,
     ) -> Self {
-        let (socket, response) = connect("wss://data-stream.binance.vision/stream").expect("Can't connect");
-
-        log::info!("Connected to the server. Response HTTP code: {}", response.status());
-
         Self {
+            entity_id,
             queue,
             instruments_map,
             channels_per_request,
             channels,
             request_latency,
             request_latest_ts,
-            socket,
+            socket: None,
             request_id: 0,
         }
+    }
+
+    fn connect(&mut self) {
+        let (socket, response) = connect("wss://stream.binance.com:9443/ws").expect("Can't connect");
+        log::info!("Connected to the server. Response HTTP code: {}", response.status());
+
+        assert!((100..400).contains(&response.status().as_u16()));
+        self.request_id = 0;
+        self.socket = Some(socket);
     }
 
     pub fn ticker_to_channel(ticker: &String) -> String {
@@ -63,7 +75,7 @@ impl PriceTickerStream {
     }
 
     pub fn listen_from_tickers_split(
-        queue: Arc<ArrayQueue<PriceTicker>>,
+        queue: Arc<ArrayQueue<DTO>>,
         tickers: Vec<String>,
         instruments_map: Arc<InstrumentsMap>,
         channels_per_stream: usize,
@@ -85,7 +97,7 @@ impl PriceTickerStream {
     }
 
     pub fn listen_from_tickers_group(
-        queue: Arc<ArrayQueue<PriceTicker>>,
+        queue: Arc<ArrayQueue<DTO>>,
         tickers_groups: Vec<Vec<String>>,
         instruments_map: Arc<InstrumentsMap>,
         channels_per_request: usize,
@@ -100,13 +112,14 @@ impl PriceTickerStream {
         sockets_count
     }
 
-    fn spawn_stream(socket_id: usize, channels: Vec<String>, queue: &Arc<ArrayQueue<PriceTicker>>, instruments_map: &Arc<InstrumentsMap>, channels_per_request: usize, request_latest_ts: &Arc<RwLock<u128>>) {
+    fn spawn_stream(socket_id: usize, channels: Vec<String>, queue: &Arc<ArrayQueue<DTO>>, instruments_map: &Arc<InstrumentsMap>, channels_per_request: usize, request_latest_ts: &Arc<RwLock<u128>>) {
         let queue_ref = Arc::clone(queue);
         let instruments_map_ref = Arc::clone(instruments_map);
         let request_latest_ts_ref = Arc::clone(request_latest_ts);
 
         thread::Builder::new().name(format!("stream_pt_{socket_id}")).spawn(move || {
             Self::new(
+                socket_id,
                 queue_ref,
                 channels,
                 instruments_map_ref,
@@ -117,20 +130,50 @@ impl PriceTickerStream {
         }).expect("Failed to spawn price ticker thread");
     }
 
-    pub fn send_json(&mut self, data: JsonValue) {
+    fn send_json(&mut self, data: JsonValue) {
         let mut ts = self.request_latest_ts.write().expect("Can't get the lock");
-        self.socket.send(Message::Text(json::stringify(data))).expect("Can't send the data");
+        self.socket.as_mut().unwrap().send(Message::Text(json::stringify(data))).expect("Can't send the data");
         thread::sleep(Duration::from_millis(250));
         *ts = time();
     }
 
-    pub fn run(&mut self) {
-        self.subscribe();
-        log::info!("Subscription done");
-        self.handle();
+    fn run(&mut self) {
+        let mut reconnect_sleep = 0;
+        loop {
+            self.connect();
+            self.subscribe();
+            log::info!("Subscription done");
+            self.handle();
+            self.close_socket();
+            self.queue.push(
+                DTO::MonitoringMessage(MonitoringMessage::new(
+                    time(),
+                    MonitoringStatus::ERROR, MonitoringEntity::PRICE_TICKER,
+                    self.entity_id.clone()
+                ))
+            ).expect("Can't push error message");
+
+            reconnect_sleep += 15;
+            log::warn!("Reconnect stream in {reconnect_sleep}s...");
+            thread::sleep(Duration::from_secs(reconnect_sleep));
+        }
     }
 
-    pub fn subscribe(&mut self) {
+    fn handle_ping(&mut self, ts: u128, ping_payload: Vec<u8>) -> bool {
+        let ts_ms_their: u128 = String::from_utf8_lossy(&ping_payload).parse().unwrap();
+        let ts_ms_our: u128 =  Duration::from_nanos(ts as u64).as_millis();
+        let lag = ts_ms_our - ts_ms_their;
+        log::info!("Ping received  their: {} our: {} lag: {}ms", ts_ms_their, ts_ms_our, lag);
+        match self.socket.as_mut().unwrap().send(Message::Pong(ping_payload)) {
+            Ok(_) => return true,
+            Err(err) => {
+                log::error!("Can't flush socket: {}", err);
+                return false;
+            }
+        };
+    }
+
+    fn subscribe(&mut self) {
         for (i, items) in self.channels.clone()
             .chunks(self.channels_per_request)
             .into_iter()
@@ -160,63 +203,73 @@ impl PriceTickerStream {
     }
 
     fn handle_raw_price_ticker(&mut self, ts: u128, raw: String) {
-        let object = json::parse(&raw).expect("Can't parse json");
-        let data = &object["data"];
+        let data = &json::parse(&raw).expect("Can't parse json");
         let instrument_arc = self.instruments_map.map.get(data["s"].as_str().expect("No symbol")).expect("No instrument");
-        let price_ticker = PriceTicker {
+        let price_ticker = DTO::PriceTicker(PriceTicker {
             timestamp: ts,
             instrument: Arc::clone(instrument_arc),
             bid: parse_f64_field(data, "b"),
             bid_amount: parse_f64_field(data, "B"),
             ask: parse_f64_field(data, "a"),
             ask_amount: parse_f64_field(data, "A"),
-        };
+        });
 
         self.queue.push(price_ticker).expect("Can't add price ticker to queue");
     }
 
     fn handle(&mut self) {
         loop {
-            let msg = self.socket.read().expect("Error reading message");
+            let result = self.socket.as_mut().unwrap().read();
             let ts = time();
-            match msg {
-                Message::Text(raw) => {
-                    self.handle_raw_price_ticker(ts, raw);
+            match result {
+                Ok(msg) => match msg {
+                    Message::Text(raw) => {
+                        self.handle_raw_price_ticker(ts, raw);
+                    }
+                    Message::Ping(payload ) => {
+                        if !self.handle_ping(ts, payload) {
+                            return;
+                        }
+                    }
+                    msg => log::warn!("Unexpected msg: {msg}")
                 }
-                Message::Ping(_) => {
-                    self.flush_socket();
+                Err(err) => {
+                    log::error!("Can't read socket: {}", err);
+                    return;
                 }
-                msg => log::warn!("Unexpected msg: {msg}")
+            };
+        }
+    }
+
+    fn close_socket(&mut self) {
+        if let Some(mut socket) = self.socket.take() {
+            match socket.close(None) {
+                Ok(_) => {
+                    log::info!("Socket closed successfully");
+                }
+                Err(err) => {
+                    log::warn!("Error during the socket closing: {}", err);
+                }
             }
         }
     }
 
-    pub fn next_id(&mut self) -> usize {
+    fn next_id(&mut self) -> usize {
         let id = self.request_id.clone();
         self.request_id += 1;
         id
-    }
-
-    fn flush_socket(&mut self) {
-        self.socket.flush().expect("Can't flush")
     }
 
     fn send_message_and_handle(&mut self, mut data: JsonValue, result_handler: fn(&PriceTickerStream, JsonValue)) {
         let id = self.next_id();
         data.insert("id", id).expect("Can't insert data");
         self.send_json(data);
-
         loop {
-            let msg = self.socket.read().expect("Error reading message");
+            let msg = self.socket.as_mut().unwrap().read().expect("Error reading message");
             match msg {
                 Message::Text(a) => {
                     // log::info!("Message during sub: {a}");
-
-                    if a.contains("\"data\"") {
-                        continue;
-                    }
-                    // log::info!("Message during sub: {a}");
-                    if a.contains("\"result\"") {
+                    if a.starts_with("{\"r") {
                         // log::info!("Got the result: {}", a);
                         let data = json::parse(&a).expect("Can't parse json");
                         let got_id = data["id"].as_usize().unwrap();
@@ -225,8 +278,10 @@ impl PriceTickerStream {
                         return;
                     }
                 }
-                Message::Ping(_) => {
-                    self.flush_socket()
+                Message::Ping(payload) => {
+                    if !self.handle_ping(time(), payload) {
+                        return;
+                    }
                 }
                 _ => log::warn!("Unexpected msg type")
             }
@@ -234,94 +289,94 @@ impl PriceTickerStream {
     }
 }
 
-pub fn dump_freq(
-    path: String,
-    tickers: Vec<String>,
-    instruments_map: Arc<InstrumentsMap>,
-) {
-    let request_latest_ts = Arc::new(RwLock::new(0));
-    let queue = Arc::new(ArrayQueue::new(100_000));
-    for (i, channels) in tickers.iter()
-        .map(PriceTickerStream::ticker_to_channel)
-        .chunks(10)
-        .into_iter()
-        .map(|chunk| chunk.collect_vec())
-        .enumerate() {
-        if i < 9 {
-            continue;
-        }
-        log::info!("Process: {channels:?}");
-        // if i == 13 {
-        //     println!("{channels:?}")
-        // }
-        // continue;
-
-        let queue_ref = Arc::clone(&queue);
-        let instruments_map_ref = Arc::clone(&instruments_map);
-        let request_latest_ts_ref = Arc::clone(&request_latest_ts);
-
-        let t = thread::Builder::new().spawn(move || {
-            let mut stream = PriceTickerStream::new(
-                queue_ref,
-                channels,
-                instruments_map_ref,
-                25,
-                250,
-                request_latest_ts_ref,
-            );
-            stream.subscribe();
-            let ts_start = time();
-            let ts_end = ts_start + Duration::from_secs(10).as_nanos();
-
-            match stream.socket.get_mut() {
-                MaybeTlsStream::NativeTls(t) => {
-                    // -- use either one or another
-                    //t.get_mut().set_nonblocking(true);
-                    t.get_mut().set_read_timeout(Some(Duration::from_millis(100))).expect("Error: cannot set read-timeout to underlying stream");
-                },
-                // handle more cases as necessary, this one only focuses on native-tls
-                _ => unimplemented!()
-            }
-
-
-            while time() < ts_end {
-                match stream.socket.read() {
-                    Ok(Message::Text(raw)) => {
-                        stream.handle_raw_price_ticker(time() - ts_start, raw)
-                    },
-                    Err(err) => {
-                        match err {
-                            // Silently drop the error: Processing error: IO error: Resource temporarily unavailable (os error 11)
-                            // That occurs when no messages are to be read
-                            Error::Io(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                // log::info!("Would block");
-                            },
-                            _ => panic!("{}", err),
-                        }
-                    },
-                    _ => {}
-                }
-
-            }
-        }).expect("Failed to spawn price ticker thread");
-
-        let mut v = Vec::new();
-        while !t.is_finished() || !queue.is_empty() {
-            match queue.pop() {
-                Some(price_ticker) => {
-                    let base = price_ticker.instrument.base.clone();
-                    let quote = price_ticker.instrument.quote.clone();
-                    v.push(object! {ts: price_ticker.timestamp.to_string(), symbol: format!("{base}/{quote}")});
-                }
-                None => {
-                    // log::info!("Empty queue");
-                    thread::sleep(Duration::from_nanos(10));
-                    // log::info!("Queue size {}", queue.len());
-                }
-            }
-        }
-
-        fs::write(Path::new(&path).join(format!("{i}.json")), json::stringify(v)).expect("Can't write json");
-        log::info!("Done {i}")
-    }
-}
+// pub fn dump_freq(
+//     path: String,
+//     tickers: Vec<String>,
+//     instruments_map: Arc<InstrumentsMap>,
+// ) {
+//     let request_latest_ts = Arc::new(RwLock::new(0));
+//     let queue = Arc::new(ArrayQueue::new(100_000));
+//     for (i, channels) in tickers.iter()
+//         .map(PriceTickerStream::ticker_to_channel)
+//         .chunks(10)
+//         .into_iter()
+//         .map(|chunk| chunk.collect_vec())
+//         .enumerate() {
+//         if i < 9 {
+//             continue;
+//         }
+//         log::info!("Process: {channels:?}");
+//         // if i == 13 {
+//         //     println!("{channels:?}")
+//         // }
+//         // continue;
+//
+//         let queue_ref = Arc::clone(&queue);
+//         let instruments_map_ref = Arc::clone(&instruments_map);
+//         let request_latest_ts_ref = Arc::clone(&request_latest_ts);
+//
+//         let t = thread::Builder::new().spawn(move || {
+//             let mut stream = PriceTickerStream::new(
+//                 queue_ref,
+//                 channels,
+//                 instruments_map_ref,
+//                 25,
+//                 250,
+//                 request_latest_ts_ref,
+//             );
+//             stream.subscribe();
+//             let ts_start = time();
+//             let ts_end = ts_start + Duration::from_secs(10).as_nanos();
+//
+//             match stream.socket.get_mut() {
+//                 MaybeTlsStream::NativeTls(t) => {
+//                     // -- use either one or another
+//                     //t.get_mut().set_nonblocking(true);
+//                     t.get_mut().set_read_timeout(Some(Duration::from_millis(100))).expect("Error: cannot set read-timeout to underlying stream");
+//                 },
+//                 // handle more cases as necessary, this one only focuses on native-tls
+//                 _ => unimplemented!()
+//             }
+//
+//
+//             while time() < ts_end {
+//                 match stream.socket.read() {
+//                     Ok(Message::Text(raw)) => {
+//                         stream.handle_raw_price_ticker(time() - ts_start, raw)
+//                     },
+//                     Err(err) => {
+//                         match err {
+//                             // Silently drop the error: Processing error: IO error: Resource temporarily unavailable (os error 11)
+//                             // That occurs when no messages are to be read
+//                             Error::Io(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+//                                 // log::info!("Would block");
+//                             },
+//                             _ => panic!("{}", err),
+//                         }
+//                     },
+//                     _ => {}
+//                 }
+//
+//             }
+//         }).expect("Failed to spawn price ticker thread");
+//
+//         let mut v = Vec::new();
+//         while !t.is_finished() || !queue.is_empty() {
+//             match queue.pop() {
+//                 Some(price_ticker) => {
+//                     let base = price_ticker.instrument.base.clone();
+//                     let quote = price_ticker.instrument.quote.clone();
+//                     v.push(object! {ts: price_ticker.timestamp.to_string(), symbol: format!("{base}/{quote}")});
+//                 }
+//                 None => {
+//                     // log::info!("Empty queue");
+//                     thread::sleep(Duration::from_nanos(10));
+//                     // log::info!("Queue size {}", queue.len());
+//                 }
+//             }
+//         }
+//
+//         fs::write(Path::new(&path).join(format!("{i}.json")), json::stringify(v)).expect("Can't write json");
+//         log::info!("Done {i}")
+//     }
+// }
