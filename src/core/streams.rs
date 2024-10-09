@@ -33,6 +33,8 @@ pub struct PriceTickerStream {
     request_latency: u64,
     request_latest_ts: Arc<RwLock<u128>>,
     request_id: usize,
+
+    latest_ticker_ts: u128
 }
 
 #[allow(dead_code)]
@@ -56,6 +58,7 @@ impl PriceTickerStream {
             request_latest_ts,
             socket: None,
             request_id: 0,
+            latest_ticker_ts: 0
         }
     }
 
@@ -162,8 +165,14 @@ impl PriceTickerStream {
     fn handle_ping(&mut self, ts: u128, ping_payload: Vec<u8>) -> bool {
         let ts_ms_their: u128 = String::from_utf8_lossy(&ping_payload).parse().unwrap();
         let ts_ms_our: u128 =  Duration::from_nanos(ts as u64).as_millis();
-        let lag = ts_ms_our - ts_ms_their;
-        log::info!("Ping received  their: {} our: {} lag: {}ms", ts_ms_their, ts_ms_our, lag);
+        let lag = if ts_ms_our > ts_ms_their {
+            ts_ms_our - ts_ms_their
+        } else {
+             0
+        };
+
+        let price_ticker_lag = Duration::from_nanos((ts - self.latest_ticker_ts) as u64).as_millis();
+        log::info!("Ping received  their: {} our: {} lag: {}ms. Latest ticker {}ms", ts_ms_their, ts_ms_our, lag, price_ticker_lag);
         match self.socket.as_mut().unwrap().send(Message::Pong(ping_payload)) {
             Ok(_) => return true,
             Err(err) => {
@@ -224,6 +233,7 @@ impl PriceTickerStream {
             match result {
                 Ok(msg) => match msg {
                     Message::Text(raw) => {
+                        self.latest_ticker_ts = ts.clone();
                         self.handle_raw_price_ticker(ts, raw);
                     }
                     Message::Ping(payload ) => {

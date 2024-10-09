@@ -74,7 +74,7 @@ fn main() {
             }
             None => {
                 // log::info!("Empty queue");
-                thread::sleep(Duration::from_nanos(10));
+                thread::sleep(Duration::from_millis(1));
                 // log::info!("Queue size {}", queue.len());
             }
         }
