@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 tokio-tungstenite = "*"
-tungstenite = { version = "*", features = ["native-tls"] }
+tungstenite = { version = "*", features = ["rustls-tls-webpki-roots"] }
 url = "*"
 env_logger = "*"
 log = "*"
@@ -14,3 +14,17 @@ crossbeam-queue = "*"
 petgraph = "*"
 itertools = "*"
 uuid = { version = "1.10.0", features = ["v4"] }
+
+#decimal = "*"
+fefix = { git =  "https://github.com/ferrumfix/ferrumfix/", branch = "main" }
+#rust_decimal = "*"
+#rust_decimal_macros = "*"
+ed25519-dalek = { version = "*", features = ["pem"] }
+#base64 = "*"
+#native-tls = "0.2.12"
+rustls = "0.23.14"
+webpki-roots = "0.26.6"
+base64 = "0.22.1"
+#webpki = "0.21.4"
+#chrono = "*"
+#pem = "*"

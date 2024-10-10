@@ -85,6 +85,7 @@ pub enum TimeInForce {
 #[derive(Debug)]
 pub struct Order {
     pub instrument: Arc<Instrument>,
+    pub client_order_id: String,
     pub order_type: OrderType,
     pub side: OrderSide,
     pub status: OrderStatus,
@@ -92,11 +93,14 @@ pub struct Order {
     pub amount: f64,
     pub amount_quote: f64,
     pub amount_filled: f64,
+    pub fee: f64,
+    pub error: String
 }
 
 impl Order {
     pub fn new(
         instrument: Arc<Instrument>,
+        client_order_id: String,
         order_type: OrderType,
         side: OrderSide,
         status: OrderStatus,
@@ -107,6 +111,7 @@ impl Order {
     ) -> Self {
         Self {
             instrument,
+            client_order_id,
             order_type,
             side,
             status,
@@ -114,6 +119,8 @@ impl Order {
             amount,
             amount_quote,
             amount_filled,
+            fee: 0.0,
+            error: "".to_string(),
         }
     }
 }

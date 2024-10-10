@@ -35,20 +35,20 @@ impl OrderExecutionSimulator {
                 amount_quote = 0.;
             }
 
-            let order = Order::new(
-                Arc::clone(&instrument),
-                OrderType::MARKET,
-                order_side.clone(),
-                OrderStatus::NEW,
-                0.,
-                amount,
-                amount_quote,
-                0.
-            );
+            // let order = Order::new(
+            //     Arc::clone(&instrument),
+            //     OrderType::MARKET,
+            //     order_side.clone(),
+            //     OrderStatus::NEW,
+            //     0.,
+            //     amount,
+            //     amount_quote,
+            //     0.
+            // );
 
-            executed_orders.append(
-                &mut self.execute_market_orders(vec![order], tickers_map)
-            );
+            // executed_orders.append(
+            //     &mut self.execute_market_orders(vec![order], tickers_map)
+            // );
         }
 
         executed_orders

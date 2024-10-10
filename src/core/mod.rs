@@ -6,3 +6,4 @@ pub mod utils;
 pub mod streams;
 pub mod oes;
 pub mod strategies;
+pub mod oms;

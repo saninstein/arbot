@@ -1,7 +1,7 @@
 use std::{fs, thread};
 use json::JsonValue;
 use std::time::SystemTime;
-use std::io::Write;
+use std::io::{Read, Write};
 
 pub fn time() -> u128 {
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {

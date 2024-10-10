@@ -34,7 +34,7 @@ pub struct PriceTickerStream {
     request_latest_ts: Arc<RwLock<u128>>,
     request_id: usize,
 
-    latest_ticker_ts: u128
+    latest_ticker_ts: u128,
 }
 
 #[allow(dead_code)]
@@ -58,13 +58,23 @@ impl PriceTickerStream {
             request_latest_ts,
             socket: None,
             request_id: 0,
-            latest_ticker_ts: 0
+            latest_ticker_ts: 0,
         }
     }
 
     fn connect(&mut self) {
-        let (socket, response) = connect("wss://stream.binance.com:9443/ws").expect("Can't connect");
+        let (mut socket, response) = connect("wss://stream.binance.com:9443/ws").expect("Can't connect");
         log::info!("Connected to the server. Response HTTP code: {}", response.status());
+
+        match socket.get_mut() {
+            MaybeTlsStream::Rustls(ref mut t) => {
+                // -- use either one or another
+                //t.get_mut().set_nonblocking(true);
+                t.get_mut().set_read_timeout(Some(Duration::from_millis(1000))).expect("Error: cannot set read-timeout to underlying stream");
+            }
+            // handle more cases as necessary, this one only focuses on native-tls
+            _ => unimplemented!()
+        }
 
         assert!((100..400).contains(&response.status().as_u16()));
         self.request_id = 0;
@@ -152,7 +162,7 @@ impl PriceTickerStream {
                 DTO::MonitoringMessage(MonitoringMessage::new(
                     time(),
                     MonitoringStatus::ERROR, MonitoringEntity::PRICE_TICKER,
-                    self.entity_id.clone()
+                    self.entity_id.clone(),
                 ))
             ).expect("Can't push error message");
 
@@ -164,11 +174,11 @@ impl PriceTickerStream {
 
     fn handle_ping(&mut self, ts: u128, ping_payload: Vec<u8>) -> bool {
         let ts_ms_their: u128 = String::from_utf8_lossy(&ping_payload).parse().unwrap();
-        let ts_ms_our: u128 =  Duration::from_nanos(ts as u64).as_millis();
+        let ts_ms_our: u128 = Duration::from_nanos(ts as u64).as_millis();
         let lag = if ts_ms_our > ts_ms_their {
             ts_ms_our - ts_ms_their
         } else {
-             0
+            0
         };
 
         let price_ticker_lag = Duration::from_nanos((ts - self.latest_ticker_ts) as u64).as_millis();
@@ -230,13 +240,15 @@ impl PriceTickerStream {
         loop {
             let result = self.socket.as_mut().unwrap().read();
             let ts = time();
+
             match result {
                 Ok(msg) => match msg {
                     Message::Text(raw) => {
+                        // log::info!("Received message: {raw}");
                         self.latest_ticker_ts = ts.clone();
                         self.handle_raw_price_ticker(ts, raw);
                     }
-                    Message::Ping(payload ) => {
+                    Message::Ping(payload) => {
                         if !self.handle_ping(ts, payload) {
                             return;
                         }
@@ -275,9 +287,9 @@ impl PriceTickerStream {
         data.insert("id", id).expect("Can't insert data");
         self.send_json(data);
         loop {
-            let msg = self.socket.as_mut().unwrap().read().expect("Error reading message");
+            let msg = self.socket.as_mut().unwrap().read();
             match msg {
-                Message::Text(a) => {
+                Ok(Message::Text(a)) => {
                     // log::info!("Message during sub: {a}");
                     if a.starts_with("{\"r") {
                         // log::info!("Got the result: {}", a);
@@ -288,11 +300,22 @@ impl PriceTickerStream {
                         return;
                     }
                 }
-                Message::Ping(payload) => {
+                Ok(Message::Ping(payload)) => {
                     if !self.handle_ping(time(), payload) {
                         return;
                     }
+                },
+                Err(err) => {
+                    match err {
+                        // Silently drop the error: Processing error: IO error: Resource temporarily unavailable (os error 11)
+                        // That occurs when no messages are to be read
+                        Error::Io(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(100));
+                        },
+                        _ => panic!("{}", err),
+                    }
                 }
+
                 _ => log::warn!("Unexpected msg type")
             }
         }
