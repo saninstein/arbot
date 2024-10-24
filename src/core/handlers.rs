@@ -54,8 +54,8 @@ impl PriceTickerListener for PriceTickerFilter {
 impl MonitoringMessageListener for PriceTickerFilter {
     fn on_monitoring_message(&mut self, message: &MonitoringMessage) {
         match message.entity {
-            MonitoringEntity::PRICE_TICKER => match message.status {
-                MonitoringStatus::ERROR => self.tickers_map.clear(),
+            MonitoringEntity::PriceTicker => match message.status {
+                MonitoringStatus::Error => self.tickers_map.clear(),
                 _ => {}
             }
             _ => {}

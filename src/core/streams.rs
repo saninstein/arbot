@@ -161,7 +161,7 @@ impl PriceTickerStream {
             self.queue.push(
                 DTO::MonitoringMessage(MonitoringMessage::new(
                     time(),
-                    MonitoringStatus::ERROR, MonitoringEntity::PRICE_TICKER,
+                    MonitoringStatus::Error, MonitoringEntity::PriceTicker,
                     self.entity_id.clone(),
                 ))
             ).expect("Can't push error message");

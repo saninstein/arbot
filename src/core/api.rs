@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::core::dto::{Balance, Instrument, MonitoringMessage, Order, PriceTicker};
+use crossbeam_queue::ArrayQueue;
+use crate::core::dto::{Balance, Instrument, MonitoringMessage, Order, PriceTicker, DTO};
 
 pub trait PriceTickerListener {
     fn on_price_ticker(&mut self, price_ticker: &PriceTicker, tickers_map: &HashMap<Arc<Instrument>, PriceTicker>);

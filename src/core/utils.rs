@@ -50,3 +50,17 @@ pub fn read_tickers(path: String) -> Vec<Vec<String>> {
     }
     result
 }
+
+
+pub enum RoundingMode {
+    Up,
+    Down,
+}
+
+pub fn round(value: f64, precision: i32, rounding_mode: RoundingMode) -> f64 {
+    let factor = 10_f64.powi(precision);
+    match rounding_mode {
+        RoundingMode::Up => (value * factor).ceil() / factor,
+        RoundingMode::Down => (value * factor).floor() / factor,
+    }
+}

@@ -27,7 +27,7 @@ impl OrderExecutionSimulator {
             let balances = &self.balances;
             log::info!("instrument: {instrument:?} order_side: {order_side:?} balance: {balances:?}");
 
-            if *order_side == OrderSide::BUY {  // we have quote on balance
+            if *order_side == OrderSide::Buy {  // we have quote on balance
                 amount = 0.;
                 amount_quote = self.balances.get(&instrument.quote).unwrap().clone();
             } else {  // we have base on balance
@@ -63,14 +63,14 @@ impl OrderExecutionSimulator {
                 // Handle the case where amount is 0 but amount_quote is provided
                 if order.amount == 0.0 && order.amount_quote > 0.0 {
                     // Calculate amount from amount_quote based on the current price
-                    if order.side == OrderSide::BUY {
+                    if order.side == OrderSide::Buy {
                         order.amount = order.amount_quote / ticker.ask; // Calculate how much to buy
                     } else {
                         order.amount = order.amount_quote / ticker.bid; // Calculate how much to sell
                     }
                 }
                 match order.side {
-                    OrderSide::BUY => {
+                    OrderSide::Buy => {
                         // BUY: Fill at the ask price
                         let total_cost = order.amount * ticker.ask; // amount * ask price in quote currency
 
@@ -88,12 +88,12 @@ impl OrderExecutionSimulator {
                             *base_balance += order.amount * (1. - self.fee); // Add the bought base amount to the balance
                             order.amount_filled = order.amount; // Fully fill the order
                             order.amount_quote = total_cost;
-                            order.status = OrderStatus::FILLED;
+                            order.status = OrderStatus::Filled;
                         } else {
-                            order.status = OrderStatus::CANCELED; // Not enough balance, cancel the order
+                            order.status = OrderStatus::Canceled; // Not enough balance, cancel the order
                         }
                     }
-                    OrderSide::SELL => {
+                    OrderSide::Sell => {
                         // SELL: Fill at the bid price
                         let total_proceeds = order.amount * ticker.bid; // amount * bid price in quote currency
 
@@ -111,15 +111,15 @@ impl OrderExecutionSimulator {
                             *quote_balance += total_proceeds * (1. - self.fee); // Add the proceeds to the quote balance
                             order.amount_filled = order.amount; // Fully fill the order
                             order.amount_quote = total_proceeds;
-                            order.status = OrderStatus::FILLED;
+                            order.status = OrderStatus::Filled;
                         } else {
-                            order.status = OrderStatus::CANCELED; // Not enough base currency, cancel the order
+                            order.status = OrderStatus::Canceled; // Not enough base currency, cancel the order
                         }
                     }
                 }
             } else {
                 // If no ticker data is found for the instrument, mark the order as CANCELED
-                order.status = OrderStatus::CANCELED;
+                order.status = OrderStatus::Canceled;
             }
             // let balances = &self.balances;
             // log::info!("OrderExecutionSimulator balance after order execution: {balances:?}");

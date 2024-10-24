@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -36,43 +37,65 @@ impl PriceTicker {
     }
 }
 
-#[derive(Eq, Hash, PartialEq, Debug)]
+#[derive(Debug)]
 pub struct Instrument {
+    pub exchange: String,
     pub symbol: String,
     pub base: String,
     pub quote: String,
+    pub amount_precision: usize,
+    pub price_precision: usize,
+    pub order_amount_max: f64,
+    pub order_amount_min: f64,
+    pub order_notional_min: f64,
+    pub order_notional_max: f64
 }
+
+impl Hash for Instrument {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.symbol.hash(state);
+    }
+}
+
+impl PartialEq for Instrument {
+    fn eq(&self, other: &Self) -> bool {
+        self.symbol == other.symbol
+    }
+}
+
+impl Eq for Instrument {}
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum OrderSide {
-    BUY, SELL
+    Buy,
+    Sell
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum OrderStatus {
     // created but not yet sent to exchange
-    SCHEDULED,
+    Scheduled,
     // http request has been sent by EMS
-    SCHEDULED_SENT,
+    ScheduledSent,
     // registered by matching engine (http response after `create_order` api call)
-    NEW,
+    New,
     // order has been confirmed to be placed in the orderbook
-    OPEN,
-    PARTIALLY_FILLED,
-    FILLED,
+    Open,
+    PartiallyFilled,
+    Filled,
     // CANCEL operation scheduled inside strategy
-    CANCELING,
-    CANCELING_SENT,
+    Canceling,
+    CancelingSent,
     // order canceled on exchange
-    CANCELED,
-    ERROR
+    Canceled,
+    Error
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum OrderType {
-    MARKET,
-    LIMIT,
-    LIMIT_MAKER
+    Market,
+    Limit,
+    LimitMaker
 }
 
 pub enum TimeInForce {
@@ -84,7 +107,9 @@ pub enum TimeInForce {
 
 #[derive(Debug)]
 pub struct Order {
+    pub timestamp: u128,
     pub instrument: Arc<Instrument>,
+    pub exchange_order_id: String,
     pub client_order_id: String,
     pub order_type: OrderType,
     pub side: OrderSide,
@@ -98,27 +123,30 @@ pub struct Order {
 }
 
 impl Order {
-    pub fn new(
-        instrument: Arc<Instrument>,
-        client_order_id: String,
-        order_type: OrderType,
-        side: OrderSide,
-        status: OrderStatus,
-        price: f64,
-        amount: f64,
-        amount_quote: f64,
-        amount_filled: f64
-    ) -> Self {
+    pub fn new() -> Self {
         Self {
-            instrument,
-            client_order_id,
-            order_type,
-            side,
-            status,
-            price,
-            amount,
-            amount_quote,
-            amount_filled,
+            timestamp: 0,
+            instrument: Arc::new(Instrument {
+                exchange: "".to_string(),
+                symbol: "".to_string(),
+                base: "".to_string(),
+                quote: "".to_string(),
+                amount_precision: 0,
+                price_precision: 0,
+                order_amount_max: 0.0,
+                order_amount_min: 0.0,
+                order_notional_min: 0.0,
+                order_notional_max: 0.0,
+            }),
+            exchange_order_id: "".to_string(),
+            client_order_id: "".to_string(),
+            order_type: OrderType::Market,
+            side: OrderSide::Buy,
+            status: OrderStatus::Scheduled,
+            price: 0.0,
+            amount: 0.0,
+            amount_quote: 0.0,
+            amount_filled: 0.0,
             fee: 0.0,
             error: "".to_string(),
         }
@@ -132,6 +160,7 @@ pub struct Balance {
     pub amounts: HashMap<String, (f64, f64)>,  // (free, locked)
 }
 
+
 impl Balance {
     pub fn new(timestamp: u128) -> Self {
         Self { timestamp, amounts: HashMap::new() }
@@ -141,14 +170,16 @@ impl Balance {
 
 #[derive(Debug)]
 pub enum MonitoringStatus {
-    OK,
-    ERROR
+    Ok,
+    Error
 }
 
 
 #[derive(Debug, Eq, Hash, PartialEq)]
 pub enum MonitoringEntity {
-    PRICE_TICKER, ORDER_MANAGEMENT_SYSTEM, ACCOUNT_UPDATE
+    PriceTicker,
+    OrderManagementSystem,
+    AccountUpdate
 }
 
 

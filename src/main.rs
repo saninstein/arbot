@@ -29,10 +29,8 @@ fn main() {
     }));
 
     let tickers_groups = read_tickers("tickers.json".to_string());
-    // let tickers_groups = vec![vec!["BTC/USDT".to_string(), "ETH/USDT".to_string()],];
-    let symbols =  tickers_groups.clone().into_iter().flat_map(|inner| inner.into_iter()).collect();
     let queue = Arc::new(ArrayQueue::new(100_000));
-    let instruments_map = Arc::new(InstrumentsMap::from_array_string(symbols));
+    let instruments_map = Arc::new(InstrumentsMap::from_json("/Users/alex/PycharmProjects/instruments_service/spot_insts.json"));
 
     let sockets = PriceTickerStream::listen_from_tickers_group(
         Arc::clone(&queue),

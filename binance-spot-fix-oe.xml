@@ -257,7 +257,7 @@
         <field number='38' name='OrderQty' type='QTY'/>
         <field number='39' name='OrdStatus' type='CHAR'>
             <value enum='0' description='NEW'/>
-            <value enum='1' description='PARTIALLY_FILLED'/>
+            <value enum='1' description='PartiallyFilled'/>
             <value enum='2' description='FILLED'/>
             <value enum='4' description='CANCELED'/>
             <value enum='6' description='PENDING_CANCEL'/>
@@ -432,7 +432,7 @@
         <field number='25010' name='NoListTriggeringInstructions' type='NUMINGROUP'/>
         <field number='25011' name='ListTriggerType' type='CHAR'>
             <value enum='1' description='ACTIVATED'/>
-            <value enum='2' description='PARTIALLY_FILLED'/>
+            <value enum='2' description='PartiallyFilled'/>
             <value enum='3' description='FILLED'/>
         </field>
         <field number='25012' name='ListTriggerTriggerIndex' type='INT'/>

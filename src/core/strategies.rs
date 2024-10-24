@@ -29,9 +29,9 @@ impl ArbStrategy {
     pub fn new() -> Self {
 
         let mut managements_entities_errored_ids = HashMap::new();
-        managements_entities_errored_ids.insert(MonitoringEntity::PRICE_TICKER, HashSet::new());
-        managements_entities_errored_ids.insert(MonitoringEntity::ORDER_MANAGEMENT_SYSTEM, HashSet::new());
-        managements_entities_errored_ids.insert(MonitoringEntity::ACCOUNT_UPDATE, HashSet::new());
+        managements_entities_errored_ids.insert(MonitoringEntity::PriceTicker, HashSet::new());
+        managements_entities_errored_ids.insert(MonitoringEntity::OrderManagementSystem, HashSet::new());
+        managements_entities_errored_ids.insert(MonitoringEntity::AccountUpdate, HashSet::new());
 
         Self {
             graph: Graph::new(),
@@ -68,11 +68,11 @@ impl ArbStrategy {
         if !self.edge_to_order_direction_map.contains_key(edge) {
             self.edge_to_order_direction_map.insert(
                 edge.clone(),
-                (Arc::clone(instrument), OrderSide::SELL),
+                (Arc::clone(instrument), OrderSide::Sell),
             );
             self.edge_to_order_direction_map.insert(
                 (edge.1, edge.0).clone(),
-                (Arc::clone(instrument), OrderSide::BUY),
+                (Arc::clone(instrument), OrderSide::Buy),
             );
         }
 
@@ -146,14 +146,14 @@ impl MonitoringMessageListener for ArbStrategy {
     fn on_monitoring_message(&mut self, message: &MonitoringMessage) {
         let mut entities_ids = self.managements_entities_errored_ids.get_mut(&message.entity).unwrap();
         match message.status {
-            MonitoringStatus::OK => {
+            MonitoringStatus::Ok => {
                 entities_ids.remove(&message.entity_id);
-            },
-            MonitoringStatus::ERROR => {
+            }
+            MonitoringStatus::Error => {
                 entities_ids.insert(message.entity_id.clone());
 
                 match message.entity {
-                    MonitoringEntity::PRICE_TICKER => {
+                    MonitoringEntity::PriceTicker => {
                         // unfortunately we should reset our graph and its dependencies
                         if self.graph.node_count() > 0 {
                             self.graph.clear();
@@ -171,7 +171,7 @@ impl MonitoringMessageListener for ArbStrategy {
 
 impl PriceTickerListener for ArbStrategy {
     fn on_price_ticker(&mut self, price_ticker: &PriceTicker, tickers_map: &HashMap<Arc<Instrument>, PriceTicker>) {
-        if !self.managements_entities_errored_ids[&MonitoringEntity::PRICE_TICKER].is_empty() {
+        if !self.managements_entities_errored_ids[&MonitoringEntity::PriceTicker].is_empty() {
             return; // we have the broken price ticker stream, since we reset graph might be ok.
         }
 
