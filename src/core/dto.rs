@@ -118,7 +118,7 @@ pub struct Order {
     pub amount: f64,
     pub amount_quote: f64,
     pub amount_filled: f64,
-    pub fee: f64,
+    pub fees: Vec<(String, f64)>,
     pub error: String
 }
 
@@ -147,7 +147,7 @@ impl Order {
             amount: 0.0,
             amount_quote: 0.0,
             amount_filled: 0.0,
-            fee: 0.0,
+            fees: vec![],
             error: "".to_string(),
         }
     }

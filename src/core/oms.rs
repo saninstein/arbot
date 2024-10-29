@@ -370,7 +370,23 @@ impl BinanceFixConnection {
             order.error = String::from_utf8_lossy(msg.get(fix44::TEXT).unwrap()).parse().unwrap();
         }
 
-        // TODO: fee
+        match msg.group(fix44::NO_MISC_FEES) {
+            Ok(fees_group) => {
+                for i in 0..fees_group.len() {
+                    let fee_data = fees_group.get(i).unwrap();
+                    order.fees.push(
+                        (
+                            fee_data.get::<&str>(fix44::MISC_FEE_CURR).unwrap().parse().unwrap(),
+                            fee_data.get(fix44::MISC_FEE_AMT).unwrap()
+                        )
+                    )
+                }
+            }
+            Err(FieldValueError::Missing) => {
+                log::warn!("fix44::NO_MISC_FEES missed");
+            }
+            _ => panic!("fix44::NO_MISC_FEES")
+        }
 
         order
     }
