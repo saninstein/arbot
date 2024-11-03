@@ -582,7 +582,7 @@ impl BinanceFixConnection {
                 // We hit the end of the current stream buffer, but the connection is still open.
                 log::debug!("WouldBlock reached, waiting for more data...");
                 decoder.clear();
-                // thread::sleep(Duration::from_secs(1));
+                thread::sleep(Duration::from_micros(10));
             }
             Err(e) => {
                 // Handle other types of errors.

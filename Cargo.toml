@@ -3,6 +3,10 @@ name = "untitled"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "untitled"
+path = "src/main.rs"
+
 [dependencies]
 tokio-tungstenite = "*"
 tungstenite = { version = "*", features = ["rustls-tls-webpki-roots"] }

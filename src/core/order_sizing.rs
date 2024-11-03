@@ -44,9 +44,9 @@ pub fn max_chain_amount_quote(
             ticker.bid_amount
         },
     };
-    println!("{instrument:?} {amount_quote:?}");
+    log::debug!("Amount quote for {instrument:?}: {amount_quote:?}");
     if amount_quote < instrument.order_notional_min {
-        log::warn!("Notional filter error {:?}", instrument.order_notional_min);
+        log::warn!("Notional filter error {:?} for {:?}", instrument, amount_quote);
         return None;
     }
 
@@ -69,9 +69,9 @@ pub fn max_chain_amount_quote(
         };
 
         prev_instrument = instrument;
-        println!("{instrument:?} {amount_quote:?}");
+        log::debug!("Amount quote for {instrument:?}: {amount_quote:?}");
         if amount_quote < instrument.order_notional_min {
-            log::warn!("Notional filter error {:?}", instrument.order_notional_min);
+            log::warn!("Notional filter error {:?} for {:?}", instrument, amount_quote);
             return None;
         }
     }
