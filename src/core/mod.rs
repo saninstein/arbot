@@ -7,3 +7,5 @@ pub mod streams;
 pub mod oes;
 pub mod strategies;
 pub mod oms;
+pub mod order_sizing;
+pub mod price_tickers_graph;

@@ -1,8 +1,6 @@
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
-use crate::core::dto::OrderType;
-use crate::core::dto::{Instrument, Order, OrderSide, OrderStatus, PriceTicker};
+use crate::core::dto::{Instrument, Order, OrderSide, OrderStatus, OrderType, PriceTicker};
 
 pub struct OrderExecutionSimulator {
     pub balances: HashMap<String, f64>,
@@ -17,7 +15,7 @@ impl OrderExecutionSimulator {
         Self { balances, fee }
     }
 
-    pub fn execute_orders_chain(&mut self, orders_direction: Vec<&(Arc<Instrument>, OrderSide)>, tickers_map: &HashMap<Arc<Instrument>, PriceTicker>) -> Vec<Order>  {
+    pub fn execute_orders_chain(&mut self, orders_direction: Vec<&(Arc<Instrument>, OrderSide)>, _tickers_map: &HashMap<Arc<Instrument>, PriceTicker>) -> Vec<Order>  {
         let mut executed_orders = Vec::new();
         log::info!("orders_direction: {orders_direction:?}");
         for (instrument, order_side) in orders_direction {
@@ -35,20 +33,16 @@ impl OrderExecutionSimulator {
                 amount_quote = 0.;
             }
 
-            // let order = Order::new(
-            //     Arc::clone(&instrument),
-            //     OrderType::MARKET,
-            //     order_side.clone(),
-            //     OrderStatus::NEW,
-            //     0.,
-            //     amount,
-            //     amount_quote,
-            //     0.
-            // );
+            let mut order = Order::new();
+            order.instrument = Arc::clone(&instrument);
+            order.order_type = OrderType::Market;
+            order.side = order_side.clone();
+            order.amount = amount;
+            order.amount_quote = amount_quote;
 
-            // executed_orders.append(
-            //     &mut self.execute_market_orders(vec![order], tickers_map)
-            // );
+            executed_orders.append(
+                &mut self.execute_market_orders(vec![order], _tickers_map)
+            );
         }
 
         executed_orders

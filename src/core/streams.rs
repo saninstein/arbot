@@ -1,18 +1,13 @@
 use std::net::TcpStream;
 use std::sync::{Arc, RwLock};
-use std::{fs, thread};
+use std::thread;
 use std::collections::HashSet;
-use std::io::ErrorKind;
-use std::path::Path;
 use std::time::Duration;
 use crossbeam_queue::ArrayQueue;
 use itertools::Itertools;
 use json::{object, JsonValue};
-use petgraph::matrix_graph::Nullable;
-use tungstenite::stream::{MaybeTlsStream, NoDelay};
+use tungstenite::stream::{MaybeTlsStream};
 use tungstenite::{connect, Error, Message, WebSocket};
-use tungstenite::http::StatusCode;
-use tungstenite::protocol::CloseFrame;
 use crate::core::{
     dto::PriceTicker,
     map::InstrumentsMap,
@@ -63,7 +58,8 @@ impl PriceTickerStream {
     }
 
     fn connect(&mut self) {
-        let (mut socket, response) = connect("wss://stream.binance.com:9443/ws").expect("Can't connect");
+        // let (mut socket, response) = connect("wss://stream.binance.com:9443/ws").expect("Can't connect");
+        let (mut socket, response) = connect("wss://testnet.binance.vision/ws").expect("Can't connect");
         log::info!("Connected to the server. Response HTTP code: {}", response.status());
 
         match socket.get_mut() {
@@ -310,7 +306,7 @@ impl PriceTickerStream {
                         // Silently drop the error: Processing error: IO error: Resource temporarily unavailable (os error 11)
                         // That occurs when no messages are to be read
                         Error::Io(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            thread::sleep(Duration::from_millis(100));
+                            // thread::sleep(Duration::from_millis(100));
                         },
                         _ => panic!("{}", err),
                     }

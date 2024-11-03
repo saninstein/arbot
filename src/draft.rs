@@ -10,6 +10,11 @@ mod tests {
     // }
 
     use std::sync::Arc;
+    use crossbeam_queue::ArrayQueue;
+    use fefix::FieldType;
+    use uuid::Uuid;
+    use crate::core::api::OrderListener;
+    use crate::core::dto::{Order, OrderSide, DTO};
     // use std::{fs, io, thread};
     // use std::fs::File;
     // use std::io::{stdout, Cursor, Read, Write};
@@ -26,7 +31,7 @@ mod tests {
     // use fefix::tagvalue::{Decoder, Encoder};
     // use rustls::RootCertStore;
     use crate::core::map::InstrumentsMap;
-    use crate::core::oms::BinanceFixConnection;
+    use crate::core::oms::{BinanceFixConnection, OMS};
     use crate::core::utils::{round, RoundingMode};
 
     #[test]
@@ -554,16 +559,37 @@ mod tests {
     fn run_fix() {
         env_logger::init();
         let instruments_map = Arc::new(InstrumentsMap::from_json("/Users/alex/PycharmProjects/instruments_service/spot_insts.json"));
-        let mut conn = BinanceFixConnection::new(
-            "binance-spot-fix-oe.xml",
-            ".creds/binance.pem",
-            "7YPfVLXzckzQyMnWicLQiWEyhiOPJwGCLR27ErnbhsJUPKO3TnfT9N28YU9qePSX",
-            instruments_map
+
+        let ins = Arc::clone(instruments_map.map.get("BTCUSDT").unwrap());
+
+        let mut order = Order::new();
+        order.instrument = ins.clone();
+        order.amount = 0.0001;
+        order.side = OrderSide::Buy;
+        order.client_order_id = "dummy".to_string();
+
+        let in_queue = Arc::new(ArrayQueue::new(100_000));
+        let out_queue = Arc::new(ArrayQueue::new(100_000));
+
+        let _ = in_queue.push(DTO::Order(order));
+
+        let mut oms = OMS::new(
+            in_queue,
+            out_queue,
+            instruments_map,
+            ".creds/binance.pem".to_string(),
+            "7YPfVLXzckzQyMnWicLQiWEyhiOPJwGCLR27ErnbhsJUPKO3TnfT9N28YU9qePSX".to_string()
         );
-        conn.logon();
-        loop {
-            conn.tick();
-        }
+
+        oms.run();
+    }
+
+    #[test]
+    fn uuid_len() {
+        let my_uuid = Uuid::new_v4();
+
+        // Print the UUID
+        println!("Generated UUID: {}", my_uuid.to_string().len());
     }
 
     // #[test]

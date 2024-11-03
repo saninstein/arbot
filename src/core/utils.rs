@@ -1,7 +1,7 @@
 use std::{fs, thread};
 use json::JsonValue;
 use std::time::SystemTime;
-use std::io::{Read, Write};
+use std::io::{Write};
 
 pub fn time() -> u128 {
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
@@ -36,7 +36,7 @@ pub fn init_logger() {
         .init();
 }
 
-pub fn read_tickers(path: String) -> Vec<Vec<String>> {
+pub fn read_tickers(path: &str) -> Vec<Vec<String>> {
     let raw = fs::read_to_string(path).expect("Failed to read tickers file");
     let data = json::parse(&raw).expect("Failed to parse tickers");
     let mut result = Vec::new();
@@ -57,8 +57,8 @@ pub enum RoundingMode {
     Down,
 }
 
-pub fn round(value: f64, precision: i32, rounding_mode: RoundingMode) -> f64 {
-    let factor = 10_f64.powi(precision);
+pub fn round(value: f64, precision: usize, rounding_mode: RoundingMode) -> f64 {
+    let factor = 10_f64.powi(precision as i32);
     match rounding_mode {
         RoundingMode::Up => (value * factor).ceil() / factor,
         RoundingMode::Down => (value * factor).floor() / factor,

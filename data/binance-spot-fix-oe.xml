@@ -109,7 +109,7 @@
             <field name='RawData' required='N'/>
             <field name='ResetSeqNumFlag' required='N'/>
             <field name='Username' required='N'/>
-            <field name='MessageHandling' required='N'/>
+            <field name='message_handling' required='N'/>
             <field name='ResponseMode' required='N'/>
             <field name='DropCopyFlag' required='N'/>
             <field name='UUID' required='N'/>
@@ -171,10 +171,10 @@
             <field name='Text' required='N'/>
         </message>
         <message name='LimitQuery' msgcat='app' msgtype='XLQ'>
-            <field name='ReqID' required='Y'/>
+            <field name='REQ_ID' required='Y'/>
         </message>
         <message name='LimitResponse' msgcat='app' msgtype='XLR'>
-            <field name='ReqID' required='Y'/>
+            <field name='REQ_ID' required='Y'/>
             <group name='NoLimitIndicators' required='Y'>
                 <field name='LimitType' required='Y'/>
                 <field name='LimitCount' required='Y'/>
@@ -400,7 +400,7 @@
         <field number='1386' name='ListRejectReason' type='INT'>
             <value enum='99' description='OTHER'/>
         </field>
-        <field number='6136' name='ReqID' type='STRING'/>
+        <field number='6136' name='REQ_ID' type='STRING'/>
         <field number='7940' name='StrategyID' type='INT'/>
         <field number='9406' name='DropCopyFlag' type='BOOLEAN'/>
         <field number='25000' name='RecvWindow' type='INT'/>
@@ -466,7 +466,7 @@
             <value enum='2' description='ALLOW_FAILURE'/>
         </field>
         <field number='25034' name='CancelClOrdID' type='STRING'/>
-        <field number='25035' name='MessageHandling' type='INT'>
+        <field number='25035' name='message_handling' type='INT'>
             <value enum='1' description='UNORDERED'/>
             <value enum='2' description='SEQUENTIAL'/>
         </field>

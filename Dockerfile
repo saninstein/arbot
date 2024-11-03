@@ -1,9 +1,12 @@
-FROM rust:1.81
+FROM rust:1.82
 
 COPY ./Cargo.toml ./
 COPY ./src ./src
-COPY tickers.json ./
 
 RUN cargo build --release
+
+COPY ./data ./data
+COPY ./.creds ./.creds
+
 ENV RUST_LOG=info
 CMD ["./target/release/untitled"]

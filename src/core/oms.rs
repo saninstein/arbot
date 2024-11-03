@@ -2,10 +2,12 @@ use std::{fs, io, thread};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
-use std::str::Utf8Error;
 use std::sync::Arc;
 use std::time::Duration;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use chrono::NaiveDateTime;
+use crossbeam_queue::ArrayQueue;
 use ed25519_dalek::pkcs8::DecodePrivateKey;
 use ed25519_dalek::{Signer, SigningKey};
 use fefix::definitions::{fix44, HardCodedFixFieldDefinition};
@@ -13,33 +15,127 @@ use fefix::dict::{FieldLocation, FixDatatype};
 use fefix::{Dictionary, FieldMap, FieldType, FieldValueError, RepeatingGroup, SetField, StreamingDecoder};
 use fefix::field_types::Timestamp;
 use fefix::tagvalue::{Decoder, DecoderStreaming, Encoder, EncoderHandle, Message};
-use json::object;
 use rustls::{ClientConnection, RootCertStore};
-use rustls::Stream;
 use uuid::Uuid;
-use crate::core::api::OrderListener;
-use crate::core::dto::{Order, OrderSide, OrderStatus, OrderType};
+use crate::core::api::{OrderListener};
+use crate::core::dto::{MonitoringEntity, MonitoringMessage, MonitoringStatus, Order, OrderSide, OrderStatus, OrderType, DTO};
 use crate::core::map::InstrumentsMap;
-// struct OMS {
-//     out_queue: Arc<ArrayQueue<DTO>>,
-// }
-//
-//
-// impl OMS {
-//     fn on_order_execution(&mut self, order: Order) {
-//         self.out_queue.push(DTO::Order(order)).unwrap()
-//     }
-//
-//     fn tick() {
-//         // do something when no new messages
-//     }
-// }
-//
-// impl OrderListener for OMS {
-//     fn on_order(&mut self, order: &Order) {
-//
-//     }
-// }
+use crate::core::utils::time;
+
+pub struct OMS {
+    in_queue: Arc<ArrayQueue<DTO>>,
+    out_queue: Arc<ArrayQueue<DTO>>,
+    instruments_map: Arc<InstrumentsMap>,
+    signing_key_path: String,
+    api_key: String,
+}
+
+
+impl OMS {
+    pub fn new(
+        in_queue: Arc<ArrayQueue<DTO>>,
+        out_queue: Arc<ArrayQueue<DTO>>,
+        instruments_map: Arc<InstrumentsMap>,
+        signing_key_path: String,
+        api_key: String,
+    ) -> Self {
+        Self { in_queue, out_queue, instruments_map, signing_key_path, api_key }
+    }
+
+    pub fn start(
+        in_queue: Arc<ArrayQueue<DTO>>,
+        out_queue: Arc<ArrayQueue<DTO>>,
+        instruments_map: Arc<InstrumentsMap>,
+        signing_key_path: String,
+        api_key: String,
+    ) {
+        thread::Builder::new().name("OMS".to_string()).spawn(move || {
+            let mut oms = OMS::new(
+                in_queue,
+                out_queue,
+                instruments_map,
+                signing_key_path,
+                api_key
+            );
+            oms.run();
+        }).expect("Failed to spawn OMS thread");
+    }
+
+    pub fn run(&mut self) {
+        loop {
+            let mut conn = BinanceFixConnection::new(
+                "./data/binance-spot-fix-oe.xml",
+                &self.signing_key_path,
+                &self.api_key,
+                Arc::clone(&self.instruments_map),
+            );
+            conn.logon();
+
+            // wait connection
+            loop {
+                match conn.handle_stream() {
+                    Some(DTO::MonitoringMessage(msg)) => {
+                        match msg.status {
+                            MonitoringStatus::Ok => {
+                                let _ = self.out_queue.push(DTO::MonitoringMessage(msg));
+                                break;
+                            },
+                            MonitoringStatus::Error => {
+                                panic!("Can't connect OMS")
+                            }
+                        };
+                    },
+                    None => {},
+                    other => {
+                        panic!("Unexpected result during connection: {:?}", other)
+                    }
+                };
+                thread::sleep(Duration::from_millis(100));
+            }
+
+            log::info!("OMS connected");
+
+
+            // process in/out messages
+            loop {
+                match self.in_queue.pop() {
+                    Some(DTO::Order(order)) => {
+                        conn.on_order(&order);
+                    }
+                    None => {}
+                    other => {
+                        panic!("Unexpected message type: {:?}", other)
+                    }
+                };
+
+                match conn.handle_stream() {
+                    Some(DTO::MonitoringMessage(msg)) => {
+                        match msg.status {
+                            MonitoringStatus::Ok => {
+                                let _ = self.out_queue.push(DTO::MonitoringMessage(msg)).unwrap();
+                            },
+                            MonitoringStatus::Error => {
+                                let _ = self.out_queue.push(DTO::MonitoringMessage(msg)).unwrap();
+                                break;
+                            }
+                        };
+                    },
+                    Some(DTO::Order(order)) => {
+                        let _ = self.out_queue.push(DTO::Order(order)).unwrap();
+                    }
+                    None => {},
+                    other => {
+                        panic!("Unexpected result during connection: {:?}", other)
+                    }
+                };
+            }
+
+            log::warn!("OMS disconnected. Reconnect in 5 sec");
+            thread::sleep(Duration::from_secs(5));
+        }
+    }
+}
+
 
 struct StreamTLS {
     stream: rustls::StreamOwned<ClientConnection, TcpStream>,
@@ -62,10 +158,10 @@ impl StreamTLS {
 
         let server_name = hostname.try_into().unwrap();
 
-        let mut conn = rustls::ClientConnection::new(Arc::new(config), server_name).unwrap();
-        let mut sock = TcpStream::connect(uri).unwrap();
+        let conn = rustls::ClientConnection::new(Arc::new(config), server_name).unwrap();
+        let sock = TcpStream::connect(uri).unwrap();
 
-        let mut tls = rustls::StreamOwned::new(conn, sock);
+        let tls = rustls::StreamOwned::new(conn, sock);
         tls.sock.set_nonblocking(true).expect("set_nonblocking call failed");
         log::info!("Connected to {hostname}");
         Self { stream: tls }
@@ -81,9 +177,9 @@ impl StreamTLS {
                 }
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                     // The socket is not ready to write yet
-                    log::warn!("Socket is not ready to write yet, would block");
+                    log::debug!("Socket is not ready to write yet, would block");
                     // You can retry in a loop or handle this with an event-driven approach
-                    thread::sleep(Duration::from_secs(1));
+                    // thread::sleep(Duration::from_secs(1));
                 }
                 Err(e) => {
                     // Handle other potential errors
@@ -94,9 +190,6 @@ impl StreamTLS {
         }
     }
 }
-
-pub enum ConnectionState { NotReady, Ready, ShouldReconnect }
-
 
 struct FixMessageEncoderHandler {
     api_key: String,
@@ -117,9 +210,9 @@ impl FixMessageEncoderHandler {
         self.buffer.clear();
         let mut msg = self.encoder.start_message(b"FIX.4.4", &mut self.buffer, msg_type);
         msg.set(fix44::MSG_SEQ_NUM, self.msg_seq_num.clone());
-        msg.set(fix44::SENDER_COMP_ID, sender_comp_id.clone());
+        msg.set(fix44::SENDER_COMP_ID, sender_comp_id);
         msg.set(fix44::SENDING_TIME, sending_time.clone());
-        msg.set(fix44::TARGET_COMP_ID, target_comp_id.clone());
+        msg.set(fix44::TARGET_COMP_ID, target_comp_id);
 
         self.msg_seq_num += 1;
 
@@ -135,19 +228,18 @@ impl FixMessageEncoderHandler {
         self.buffer.clear();
         let mut msg = self.encoder.start_message(b"FIX.4.4", &mut self.buffer, b"A");
         msg.set(fix44::MSG_SEQ_NUM, self.msg_seq_num.clone());
-        msg.set(fix44::SENDER_COMP_ID, sender_comp_id.clone());
+        msg.set(fix44::SENDER_COMP_ID, sender_comp_id);
         msg.set(fix44::SENDING_TIME, sending_time.clone());
-        msg.set(fix44::TARGET_COMP_ID, target_comp_id.clone());
+        msg.set(fix44::TARGET_COMP_ID, target_comp_id);
 
         // raw data
 
         let msg_to_sign = format!(
             "A\x01{}\x01{}\x01{}\x01{}",
-            sender_comp_id.clone(), target_comp_id.clone(), self.msg_seq_num.clone(), sending_time.to_string()
+            sender_comp_id, target_comp_id, self.msg_seq_num.clone(), sending_time.to_string()
         );
         let signature = self.signing_key.sign(msg_to_sign.as_bytes());
-        let raw_data = base64::encode(&signature.to_bytes());
-
+        let raw_data = STANDARD.encode(&signature.to_bytes());
 
         msg.set(fix44::RAW_DATA_LENGTH, raw_data.len() as i64);
         msg.set(fix44::RAW_DATA, raw_data.as_bytes());
@@ -156,13 +248,13 @@ impl FixMessageEncoderHandler {
         msg.set(fix44::RESET_SEQ_NUM_FLAG, true);
         msg.set(fix44::USERNAME, self.api_key.as_str());
 
-        let MessageHandling: &HardCodedFixFieldDefinition = &HardCodedFixFieldDefinition {
-            name: "MessageHandling",
+        let message_handling: &HardCodedFixFieldDefinition = &HardCodedFixFieldDefinition {
+            name: "message_handling",
             tag: 25035,
             data_type: FixDatatype::Int,
             location: FieldLocation::Body,
         };
-        msg.set(MessageHandling, 2);
+        msg.set(message_handling, 2);
 
         self.msg_seq_num += 1;
 
@@ -178,14 +270,14 @@ impl FixMessageEncoderHandler {
 
     fn create_limit_message(&mut self) -> &[u8] {
         let mut msg = self.start_message(b"XLQ");
-        pub const ReqID: &HardCodedFixFieldDefinition = &HardCodedFixFieldDefinition {
-            name: "ReqID",
+        pub const REQ_ID: &HardCodedFixFieldDefinition = &HardCodedFixFieldDefinition {
+            name: "REQ_ID",
             tag: 6136,
             data_type: FixDatatype::String,
             location: FieldLocation::Body,
         };
 
-        msg.set(ReqID, Uuid::new_v4().to_string().as_str());
+        msg.set(REQ_ID, Uuid::new_v4().to_string().as_str());
 
         msg.done().0
     }
@@ -230,7 +322,6 @@ impl FixMessageEncoderHandler {
 pub struct BinanceFixConnection {
     stream: StreamTLS,
     encoder: FixMessageEncoderHandler,
-    pub state: ConnectionState,
     decoder: DecoderStreaming<Vec<u8>>,
     instruments_map: Arc<InstrumentsMap>,
 }
@@ -246,7 +337,7 @@ impl BinanceFixConnection {
         let spec = fs::read_to_string(spec_path.to_string()).unwrap();
 
         let dictionary = Dictionary::from_quickfix_spec(&spec).unwrap();
-        let mut decoder = Decoder::new(dictionary).streaming(vec![]);
+        let decoder = Decoder::new(dictionary).streaming(vec![]);
         Self {
             stream: StreamTLS::new(),
             decoder: decoder,
@@ -257,7 +348,6 @@ impl BinanceFixConnection {
                 msg_seq_num: 1,
                 api_key: api_key.to_string(),
             },
-            state: ConnectionState::NotReady,
             instruments_map,
         }
     }
@@ -268,7 +358,7 @@ impl BinanceFixConnection {
     }
 
 
-    pub fn tick(&mut self) {
+    pub fn handle_stream(&mut self) -> Option<DTO> {
         Self::handle_incoming_message(
             &mut self.stream,
             &mut self.decoder,
@@ -367,7 +457,15 @@ impl BinanceFixConnection {
         order.amount_filled = msg.get(fix44::CUM_QTY).unwrap();
 
         if order.status == OrderStatus::Error {
-            order.error = String::from_utf8_lossy(msg.get(fix44::TEXT).unwrap()).parse().unwrap();
+            match msg.get(fix44::TEXT) {
+                Ok(value) => {
+                    order.error = String::from_utf8_lossy(value).parse().unwrap();
+                }
+                Err(FieldValueError::Missing) => {
+                    log::warn!("fix44::TEXT missed");
+                }
+                _ => panic!("fix44::TEXT")
+            }
         }
 
         match msg.group(fix44::NO_MISC_FEES) {
@@ -391,7 +489,8 @@ impl BinanceFixConnection {
         order
     }
 
-    fn handle_incoming_message(stream: &mut StreamTLS, decoder: &mut DecoderStreaming<Vec<u8>>, encoder: &mut FixMessageEncoderHandler, instruments_map: &Arc<InstrumentsMap>) {
+    fn handle_incoming_message(stream: &mut StreamTLS, decoder: &mut DecoderStreaming<Vec<u8>>, encoder: &mut FixMessageEncoderHandler, instruments_map: &Arc<InstrumentsMap>) -> Option<DTO> {
+        let mut result = None;
         match stream.stream.read_exact(decoder.fillable()) {
             Ok(_) => {
                 // Successfully filled the buffer.
@@ -405,9 +504,8 @@ impl BinanceFixConnection {
                             Ok(fix44::MsgType::ExecutionReport) => {
                                 log::info!("Handle:Execution report");
                                 // [2024-10-23T20:52:04Z INFO  untitled::core::oms] 8=FIX.4.49=000031335=849=SPOT56=EXAMPLE234=352=20241023-20:52:04.02209317=2461233511=dummy37=1105758938=0.0001000040=154=155=BTCUSDT59=160=20241023-20:52:04.02100025018=20241023-20:52:04.02100025001=3150=014=0.00000000151=0.0001000025017=0.000000001057=Y32=0.0000000039=0636=Y25023=20241023-20:52:04.02100010=218
-
                                 let order = Self::execution_report_to_order(msg, instruments_map);
-                                log::info!("Got order {order:?}");
+                                result = Some(DTO::Order(order));
                             }
                             Ok(fix44::MsgType::Reject) => {
                                 panic!("Handle:Reject");
@@ -453,21 +551,17 @@ impl BinanceFixConnection {
                                     let reset_interval_resolution = limit_data.get::<&str>(25008).unwrap();
 
                                     log::info!("XLR:{limit_type} {current_count}/{max} reset: {reset_interval}{reset_interval_resolution}");
-
                                 }
 
                                 // Create order
-
-                                log::info!("Create order^^");
-                                let mut order = Order::new();
-                                order.instrument = instruments_map.map.get("BTCUSDT").unwrap().clone();
-                                order.amount = 0.0001;
-                                order.side = OrderSide::Buy;
-                                order.client_order_id = "dummy".to_string();
-
-
-                                let msg = encoder.create_order_message(&order);
-                                stream.send_message(msg);
+                                result = Some(
+                                    DTO::MonitoringMessage(MonitoringMessage::new(
+                                        time(),
+                                        MonitoringStatus::Ok,
+                                        MonitoringEntity::OrderManagementSystem,
+                                        1,
+                                    ))
+                                );
                             }
                             t => {
                                 log::warn!("Unknown message type {t:?}");
@@ -486,22 +580,34 @@ impl BinanceFixConnection {
             }
             Err(ref e)  if e.kind() == std::io::ErrorKind::WouldBlock => {
                 // We hit the end of the current stream buffer, but the connection is still open.
-                log::info!("WouldBlock reached, waiting for more data...");
+                log::debug!("WouldBlock reached, waiting for more data...");
                 decoder.clear();
-                thread::sleep(Duration::from_secs(1));
+                // thread::sleep(Duration::from_secs(1));
             }
             Err(e) => {
                 // Handle other types of errors.
                 log::error!("TLS read error: {}", e);
                 thread::sleep(Duration::from_secs(1));
+                result = Some(
+                    DTO::MonitoringMessage(MonitoringMessage::new(
+                        time(),
+                        MonitoringStatus::Error,
+                        MonitoringEntity::OrderManagementSystem,
+                        1,
+                    ))
+                );
             }
         }
+        result
     }
 }
 
 
 impl OrderListener for BinanceFixConnection {
     fn on_order(&mut self, order: &Order) {
-        //
+        log::info!("Execute new: {:?}", order);
+        let msg = self.encoder.create_order_message(order);
+        log::info!("Serialized: {:?}", String::from_utf8_lossy(msg).to_string());
+        self.stream.send_message(msg);
     }
 }
