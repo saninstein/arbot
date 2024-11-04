@@ -18,7 +18,7 @@ use fefix::tagvalue::{Decoder, DecoderStreaming, Encoder, EncoderHandle, Message
 use rustls::{ClientConnection, RootCertStore};
 use uuid::Uuid;
 use crate::core::api::{OrderListener};
-use crate::core::dto::{MonitoringEntity, MonitoringMessage, MonitoringStatus, Order, OrderSide, OrderStatus, OrderType, DTO};
+use crate::core::dto::{Exchange, MonitoringEntity, MonitoringMessage, MonitoringStatus, Order, OrderSide, OrderStatus, OrderType, DTO};
 use crate::core::map::InstrumentsMap;
 use crate::core::utils::time;
 
@@ -209,7 +209,7 @@ impl FixMessageEncoderHandler {
 
         self.buffer.clear();
         let mut msg = self.encoder.start_message(b"FIX.4.4", &mut self.buffer, msg_type);
-        msg.set(fix44::MSG_SEQ_NUM, self.msg_seq_num.clone());
+        msg.set(fix44::MSG_SEQ_NUM, self.msg_seq_num);
         msg.set(fix44::SENDER_COMP_ID, sender_comp_id);
         msg.set(fix44::SENDING_TIME, sending_time.clone());
         msg.set(fix44::TARGET_COMP_ID, target_comp_id);
@@ -227,7 +227,7 @@ impl FixMessageEncoderHandler {
 
         self.buffer.clear();
         let mut msg = self.encoder.start_message(b"FIX.4.4", &mut self.buffer, b"A");
-        msg.set(fix44::MSG_SEQ_NUM, self.msg_seq_num.clone());
+        msg.set(fix44::MSG_SEQ_NUM, self.msg_seq_num);
         msg.set(fix44::SENDER_COMP_ID, sender_comp_id);
         msg.set(fix44::SENDING_TIME, sending_time.clone());
         msg.set(fix44::TARGET_COMP_ID, target_comp_id);
@@ -236,7 +236,7 @@ impl FixMessageEncoderHandler {
 
         let msg_to_sign = format!(
             "A\x01{}\x01{}\x01{}\x01{}",
-            sender_comp_id, target_comp_id, self.msg_seq_num.clone(), sending_time.to_string()
+            sender_comp_id, target_comp_id, self.msg_seq_num, sending_time.to_string()
         );
         let signature = self.signing_key.sign(msg_to_sign.as_bytes());
         let raw_data = STANDARD.encode(&signature.to_bytes());
@@ -425,7 +425,7 @@ impl BinanceFixConnection {
 
         let symbol = String::from_utf8_lossy(msg.get(fix44::SYMBOL).unwrap()).to_string();
         order.instrument = Arc::clone(
-            instruments_map.map.get(&symbol).unwrap()
+            instruments_map.get(&Exchange::Binance, &symbol).unwrap()
         );
 
         match msg.get(fix44::PRICE) {

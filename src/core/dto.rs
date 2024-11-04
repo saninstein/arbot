@@ -1,6 +1,26 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::slice::Iter;
+use std::sync::{Arc, LazyLock};
+use crate::core::dto::Exchange::{Binance, Bit2me};
+
+static BLANK_STR: LazyLock<String> = LazyLock::new(|| "".to_string());
+
+static BLANK_INSTRUMENT: LazyLock<Arc<Instrument>> = LazyLock::new(|| Arc::new(Instrument {
+    exchange: Exchange::Any,
+    symbol: BLANK_STR.clone(),
+    base: BLANK_STR.clone(),
+    quote: BLANK_STR.clone(),
+    amount_precision: 0,
+    price_precision: 0,
+    order_amount_max: 0.0,
+    order_amount_min: 0.0,
+    order_notional_min: 0.0,
+    order_notional_max: 0.0,
+    maker_fee: 0.0,
+    taker_fee: 0.0,
+}));
+
 
 #[derive(Debug)]
 pub struct PriceTicker {
@@ -37,9 +57,32 @@ impl PriceTicker {
     }
 }
 
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+pub enum Exchange {
+    Any,
+    Binance,
+    Bit2me
+}
+
+impl Exchange {
+    pub fn iterator() -> Iter<'static, Exchange> {
+        static EXCHANGES: [Exchange; 2] = [Binance, Bit2me];
+        EXCHANGES.iter()
+    }
+
+    pub fn from_str(exchange: &str) -> Exchange {
+        match exchange {
+            "binance" => Exchange::Binance,
+            "bit2me" => Exchange::Bit2me,
+            "any" => Exchange::Any,
+            _ => panic!("Unknown exchange: {exchange}")
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Instrument {
-    pub exchange: String,
+    pub exchange: Exchange,
     pub symbol: String,
     pub base: String,
     pub quote: String,
@@ -48,7 +91,9 @@ pub struct Instrument {
     pub order_amount_max: f64,
     pub order_amount_min: f64,
     pub order_notional_min: f64,
-    pub order_notional_max: f64
+    pub order_notional_max: f64,
+    pub maker_fee: f64,
+    pub taker_fee: f64
 }
 
 impl Hash for Instrument {
@@ -126,18 +171,7 @@ impl Order {
     pub fn new() -> Self {
         Self {
             timestamp: 0,
-            instrument: Arc::new(Instrument {
-                exchange: "".to_string(),
-                symbol: "".to_string(),
-                base: "".to_string(),
-                quote: "".to_string(),
-                amount_precision: 0,
-                price_precision: 0,
-                order_amount_max: 0.0,
-                order_amount_min: 0.0,
-                order_notional_min: 0.0,
-                order_notional_max: 0.0,
-            }),
+            instrument: Arc::clone(&BLANK_INSTRUMENT),
             exchange_order_id: "".to_string(),
             client_order_id: "".to_string(),
             order_type: OrderType::Market,

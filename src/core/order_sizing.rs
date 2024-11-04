@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use crate::core::dto::{Instrument, OrderSide, PriceTicker};
 
+#[derive(Debug, Clone)]
 pub struct SizingConfig {
     pub currency: String,
     pub min_order_size: f64,
@@ -29,8 +30,7 @@ impl SizingConfig {
 
 pub fn max_chain_amount_quote(
     tickers_map: &HashMap<Arc<Instrument>, PriceTicker>,
-    orders_direction: &Vec<(Arc<Instrument>, OrderSide)>,
-    fee: f64
+    orders_direction: &Vec<(Arc<Instrument>, OrderSide)>
 ) -> Option<f64> {
     // Initialize the maximum order size to a very large value
 
@@ -38,7 +38,7 @@ pub fn max_chain_amount_quote(
     let ticker = tickers_map.get(instrument)?;
     let mut amount_quote = match side {
         OrderSide::Buy => {
-            ticker.ask_amount * ticker.effective_ask(fee)
+            ticker.ask_amount * ticker.effective_ask(instrument.taker_fee)
         },
         OrderSide::Sell => {
             ticker.bid_amount
@@ -58,11 +58,11 @@ pub fn max_chain_amount_quote(
 
         match side {
             OrderSide::Buy => {
-                amount_quote = amount_quote.min(ticker.ask_amount) * ticker.effective_ask(fee);
+                amount_quote = amount_quote.min(ticker.ask_amount) * ticker.effective_ask(instrument.taker_fee);
             },
             OrderSide::Sell => {
                 if prev_instrument.base != instrument.base {
-                    amount_quote /= ticker.effective_bid(fee);
+                    amount_quote /= ticker.effective_bid(instrument.taker_fee);
                 }
                 amount_quote = amount_quote.min(ticker.bid_amount);
             },
@@ -82,9 +82,8 @@ pub fn chain_amount_quote(
     sizing_config: &SizingConfig,
     tickers_map: &HashMap<Arc<Instrument>, PriceTicker>,
     orders_direction: &Vec<(Arc<Instrument>, OrderSide)>,
-    fee: f64
 ) -> Option<f64> {
-    let amount_quote = max_chain_amount_quote(tickers_map, orders_direction, fee)?;
+    let amount_quote = max_chain_amount_quote(tickers_map, orders_direction)?;
     log::info!("max_chain_amount_quote: {amount_quote}");
     sizing_config.adjust_value(amount_quote)
 }

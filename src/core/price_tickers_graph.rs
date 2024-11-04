@@ -3,7 +3,7 @@ use std::sync::Arc;
 use petgraph::Graph;
 use petgraph::graph::NodeIndex;
 use petgraph::algo::find_negative_cycle;
-use crate::core::dto::{Instrument, OrderSide, PriceTicker};
+use crate::core::dto::{Exchange, Instrument, OrderSide, PriceTicker};
 
 
 pub struct ArbGraph {
@@ -12,19 +12,16 @@ pub struct ArbGraph {
 
     symbol_to_node_map: HashMap<String, NodeIndex>,
     node_to_symbol_map: HashMap<NodeIndex, String>,
-
-    fee: f64,
 }
 
 impl ArbGraph {
-    pub fn new(fee: f64) -> Self {
+    pub fn new() -> Self {
 
         Self {
             graph: Graph::new(),
             symbol_to_node_map: Default::default(),
             node_to_symbol_map: Default::default(),
             edge_to_order_direction_map: Default::default(),
-            fee,
         }
     }
 
@@ -92,7 +89,13 @@ impl ArbGraph {
         if verbose {
             let res = path.iter().map(|&node_index| { self.node_to_symbol_map.get(&node_index).unwrap().as_str() }).collect::<Vec<&str>>().join("->");
             let profit = self.calculate_path_profit(&path);
-            log::info!("Arb found {res} expected profit {profit}%");
+            let mut exchange= Exchange::Any;
+            for (instrument, _) in self.edge_to_order_direction_map.values() {
+                exchange = instrument.exchange.clone();
+                break;
+            }
+
+            log::info!("{exchange:?} Arb found {res} expected profit {profit}%");
         }
 
         Some(path)
@@ -109,9 +112,8 @@ impl ArbGraph {
 
     pub fn update(&mut self, price_ticker: &PriceTicker) {
         let (base, quote) = self.get_nodes_by_instrument(&price_ticker.instrument);
-
-        self.graph.update_edge(base, quote, -price_ticker.effective_bid(self.fee).ln());
-        self.graph.update_edge(quote, base, -(1. / price_ticker.effective_ask(self.fee)).ln());
+        self.graph.update_edge(base, quote, -price_ticker.effective_bid(price_ticker.instrument.taker_fee).ln());
+        self.graph.update_edge(quote, base, -(1. / price_ticker.effective_ask(price_ticker.instrument.taker_fee)).ln());
     }
 
     pub fn contains_currency_data(&self, currency: &str) -> bool {

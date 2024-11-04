@@ -4,19 +4,19 @@ use std::time::Duration;
 use crossbeam_queue::ArrayQueue;
 use uuid::Uuid;
 use crate::core::api::{BalanceListener, BaseStrategy, MonitoringMessageListener, OrderListener, PriceTickerListener};
-use crate::core::dto::{Balance, MonitoringMessage, Instrument, Order, OrderSide, PriceTicker, MonitoringEntity, MonitoringStatus, OrderStatus, DTO};
+use crate::core::dto::{Balance, MonitoringMessage, Instrument, Order, OrderSide, PriceTicker, MonitoringEntity, MonitoringStatus, OrderStatus, DTO, Exchange};
 use crate::core::order_sizing::{chain_amount_quote, SizingConfig};
 use crate::core::price_tickers_graph::ArbGraph;
 use crate::core::utils::{round, time, RoundingMode};
 
 pub struct ArbStrategy {
+    exchange: Exchange,
     graph: ArbGraph,
     next_check_ts: u128,
-    fee: f64,
 
     sizing_config: SizingConfig,
     orders_direction: Vec<(Arc<Instrument>, OrderSide)>,
-
+    monitoring_only: bool,
     out_queue: Arc<ArrayQueue<DTO>>,
 
     // management
@@ -24,21 +24,21 @@ pub struct ArbStrategy {
 }
 
 impl ArbStrategy {
-    pub fn new(out_queue: Arc<ArrayQueue<DTO>>) -> Self {
+    pub fn new(out_queue: Arc<ArrayQueue<DTO>>, exchange: Exchange, sizing_config: SizingConfig, monitoring_only: bool) -> Self {
 
         let mut managements_entities_errored_ids = HashMap::new();
         managements_entities_errored_ids.insert(MonitoringEntity::PriceTicker, HashSet::new());
         managements_entities_errored_ids.insert(MonitoringEntity::OrderManagementSystem, HashSet::new());
         managements_entities_errored_ids.insert(MonitoringEntity::AccountUpdate, HashSet::new());
-        let fee = 0.001;
         Self {
-            graph: ArbGraph::new(fee),
+            graph: ArbGraph::new(),
             next_check_ts: 0,
-            sizing_config: SizingConfig::new("USDT".to_string(), 20., 30.),
             orders_direction: vec![],
             managements_entities_errored_ids,
             out_queue,
-            fee
+            exchange,
+            monitoring_only,
+            sizing_config
         }
     }
 
@@ -59,6 +59,9 @@ impl ArbStrategy {
 
 impl OrderListener for ArbStrategy {
     fn on_order(&mut self, order: &Order) {
+        if self.monitoring_only {
+            return;
+        }
         log::info!("Order received {order:?}");
         if self.orders_direction.is_empty() {
             panic!("Unexpected order");
@@ -109,7 +112,7 @@ impl MonitoringMessageListener for ArbStrategy {
                 entities_ids.remove(&message.entity_id);
             }
             MonitoringStatus::Error => {
-                entities_ids.insert(message.entity_id.clone());
+                entities_ids.insert(message.entity_id);
 
                 match message.entity {
                     MonitoringEntity::PriceTicker => {
@@ -124,7 +127,11 @@ impl MonitoringMessageListener for ArbStrategy {
 }
 
 impl PriceTickerListener for ArbStrategy {
-    fn on_price_ticker(&mut self, price_ticker: &PriceTicker, tickers_map: &HashMap<Arc<Instrument>, PriceTicker>) {
+    fn on_price_ticker(&mut self, price_ticker: &PriceTicker, tickers_map: &HashMap<Exchange, HashMap<Arc<Instrument>, PriceTicker>>) {
+        if price_ticker.instrument.exchange != self.exchange {
+            return; // single exchange strategy
+        }
+        let tickers_map = tickers_map.get(&self.exchange).unwrap();
         if !self.managements_entities_errored_ids[&MonitoringEntity::PriceTicker].is_empty() {
             return; // we have the broken price ticker stream, since we reset graph might be ok.
         }
@@ -150,17 +157,23 @@ impl PriceTickerListener for ArbStrategy {
                     }
                 }
 
-                if let Some(amount_quote) = chain_amount_quote(&self.sizing_config, tickers_map, &self.orders_direction, self.fee) {
+                if let Some(amount_quote) = chain_amount_quote(&self.sizing_config, tickers_map, &self.orders_direction) {
                     // send first order
-                    self.push_order(
-                        self.create_order_from_direction(
-                            0., amount_quote
-                        )
-                    );
+                    if !self.monitoring_only {
+                        self.push_order(
+                            self.create_order_from_direction(
+                                0., amount_quote
+                            )
+                        );
+                    }
                 } else {
                     log::warn!("No initial order size");
                     self.orders_direction.clear();
                     return;
+                }
+
+                if self.monitoring_only {
+                    self.orders_direction.clear();
                 }
             }
 

@@ -9,12 +9,14 @@ mod tests {
     //     println!("{id}");
     // }
 
+    use std::collections::HashMap;
+    use std::{panic, process};
     use std::sync::Arc;
     use crossbeam_queue::ArrayQueue;
     use fefix::FieldType;
     use uuid::Uuid;
     use crate::core::api::OrderListener;
-    use crate::core::dto::{Order, OrderSide, DTO};
+    use crate::core::dto::{Instrument, Order, OrderSide, DTO};
     // use std::{fs, io, thread};
     // use std::fs::File;
     // use std::io::{stdout, Cursor, Read, Write};
@@ -32,7 +34,8 @@ mod tests {
     // use rustls::RootCertStore;
     use crate::core::map::InstrumentsMap;
     use crate::core::oms::{BinanceFixConnection, OMS};
-    use crate::core::utils::{round, RoundingMode};
+    use crate::core::streams::bit2me::PriceTickerStream;
+    use crate::core::utils::{init_logger, read_tickers, round, RoundingMode};
 
     #[test]
     fn test_round() {
@@ -42,6 +45,45 @@ mod tests {
 
         println!("Rounded up: {}", rounded_up);
         println!("Rounded down: {}", rounded_down);
+    }
+
+    #[test]
+    fn test_bit2me_pt() {
+        init_logger();
+        // let orig_hook = panic::take_hook();
+        // panic::set_hook(Box::new(move |panic_info| {
+        //     // invoke the default handler and exit the process
+        //     orig_hook(panic_info);
+        //     process::exit(1);
+        // }));
+        let queue = Arc::new(ArrayQueue::new(100_000));
+
+
+        let instruments_map = Arc::new(InstrumentsMap::from_json("./data/spot_insts_bit2me.json"));
+
+        let sockets = PriceTickerStream::listen_from_tickers_split(
+            Arc::clone(&queue),
+            instruments_map.map.values().map(|x| x.symbol.clone()).collect(),
+            Arc::clone(&instruments_map),
+            256,
+            1
+        );
+
+        log::info!("Sockets: {sockets}");
+
+        loop {
+            match queue.pop() {
+                Some(dto) => {
+                    match dto {
+                        DTO::PriceTicker(price_ticker) => {
+                            // log::info!("{price_ticker:?}");
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     // #[test]

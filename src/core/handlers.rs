@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::core::dto::{MonitoringEntity, MonitoringMessage, MonitoringStatus};
+use crate::core::dto::{Exchange, MonitoringEntity, MonitoringMessage, MonitoringStatus};
 use crate::{
     core::api::PriceTickerListener,
     core::dto::PriceTicker,
@@ -10,16 +10,21 @@ use crate::core::dto::{Instrument};
 
 pub struct PriceTickerFilter {
     pub listeners: Vec<Box<dyn BaseStrategy>>,
-    tickers_map: HashMap<Arc<Instrument>, PriceTicker>
+    tickers_map: HashMap<Exchange, HashMap<Arc<Instrument>, PriceTicker>>
 }
 
 impl PriceTickerFilter {
     pub fn new(listeners: Vec<Box<dyn BaseStrategy>>) -> Self {
-        Self { tickers_map: Default::default(), listeners }
+        let mut tickers_map = HashMap::new();
+        for exchange in Exchange::iterator() {
+            tickers_map.insert((*exchange).clone(), HashMap::default());
+        }
+        Self { tickers_map, listeners }
     }
 
     fn update_and_notify_listeners(&mut self, price_ticker: &PriceTicker) {
-        self.tickers_map.insert(Arc::clone(&price_ticker.instrument), price_ticker.copy());
+        let exchange_tickers_map = self.tickers_map.get_mut(&price_ticker.instrument.exchange).unwrap();
+        exchange_tickers_map.insert(Arc::clone(&price_ticker.instrument), price_ticker.copy());
         // let keys = self.tickers_map.len();
         // log::info!("Symbols: {keys}");
         for listener in self.listeners.iter_mut() {
@@ -29,8 +34,8 @@ impl PriceTickerFilter {
 }
 
 impl PriceTickerListener for PriceTickerFilter {
-    fn on_price_ticker(&mut self, price_ticker: &PriceTicker, _: &HashMap<Arc<Instrument>, PriceTicker>) {
-        match self.tickers_map.get(&price_ticker.instrument) {
+    fn on_price_ticker(&mut self, price_ticker: &PriceTicker, _: &HashMap<Exchange, HashMap<Arc<Instrument>, PriceTicker>>) {
+        match self.tickers_map.get(&price_ticker.instrument.exchange).unwrap().get(&price_ticker.instrument) {
             Some(p) => {
                 if !p.is_prices_equals(price_ticker) {
                     self.update_and_notify_listeners(price_ticker)
@@ -59,7 +64,7 @@ impl MonitoringMessageListener for PriceTickerFilter {
 struct DummyPriceTickerListener {}
 
 impl PriceTickerListener for DummyPriceTickerListener {
-    fn on_price_ticker(&mut self, price_ticker: &PriceTicker, _: &HashMap<Arc<Instrument>, PriceTicker>) {
+    fn on_price_ticker(&mut self, price_ticker: &PriceTicker, _: &HashMap<Exchange, HashMap<Arc<Instrument>, PriceTicker>>) {
         log::info!("Dummy listener: {price_ticker:?}")
     }
 }
