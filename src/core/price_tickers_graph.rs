@@ -26,7 +26,7 @@ impl ArbGraph {
     }
 
     pub fn get_node_by_symbol(&mut self, symbol: String) -> NodeIndex {
-        match self.symbol_to_node_map.get(&symbol as &str) {
+        match self.symbol_to_node_map.get(&symbol) {
             Some(node) => {
                 node.clone()
             }
@@ -56,7 +56,7 @@ impl ArbGraph {
             );
         }
 
-        return (base, quote);
+        (base, quote)
     }
 
     pub fn calculate_path_profit(&self, path: &Vec<NodeIndex>) -> f64 {
@@ -68,18 +68,14 @@ impl ArbGraph {
             }
         }
 
-        return (1.0 - cycle_sum.exp()) * 100.0;
+        (1.0 - cycle_sum.exp()) * 100.0
     }
 
 
     pub fn find_arb_path(&mut self, currency: &str, verbose: bool) -> Option<Vec<NodeIndex>> {
         let node_id = self.symbol_to_node_map.get(currency)?;
         let vec = find_negative_cycle(&self.graph, node_id.clone())?;
-        if !vec.contains(node_id) {
-            return None;
-        }
-
-        let pos = vec.iter().position(|x| x == node_id).unwrap();
+        let pos = vec.iter().position(|x| x == node_id)?;
         let mut path = Vec::new();
 
         path.extend_from_slice(&vec[pos..]);

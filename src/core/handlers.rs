@@ -25,8 +25,6 @@ impl PriceTickerFilter {
     fn update_and_notify_listeners(&mut self, price_ticker: &PriceTicker) {
         let exchange_tickers_map = self.tickers_map.get_mut(&price_ticker.instrument.exchange).unwrap();
         exchange_tickers_map.insert(Arc::clone(&price_ticker.instrument), price_ticker.copy());
-        // let keys = self.tickers_map.len();
-        // log::info!("Symbols: {keys}");
         for listener in self.listeners.iter_mut() {
             listener.on_price_ticker(price_ticker, &self.tickers_map);
         }

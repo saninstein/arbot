@@ -2,7 +2,7 @@
 mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
-    use untitled::core::dto::{Instrument, OrderSide, PriceTicker};
+    use untitled::core::dto::{Exchange, Instrument, OrderSide, PriceTicker};
     use untitled::core::order_sizing::{max_chain_amount_quote};
 
     fn create_instrument(
@@ -17,7 +17,7 @@ mod tests {
         max_notional: f64
     ) -> Arc<Instrument> {
         Arc::new(Instrument {
-            exchange: "test_exchange".to_string(),
+            exchange: Exchange::Binance,
             symbol: symbol.to_string(),
             base: base.to_string(),
             quote: quote.to_string(),
@@ -27,6 +27,8 @@ mod tests {
             order_amount_max: max_amount,
             order_notional_min: min_notional,
             order_notional_max: max_notional,
+            maker_fee: 0.0,
+            taker_fee: 0.0,
         })
     }
 
@@ -88,7 +90,7 @@ mod tests {
             (Arc::clone(&eth_usdt), OrderSide::Sell),
         ];
 
-        let result = max_chain_amount_quote(&tickers_map, &orders, 0.000);
+        let result = max_chain_amount_quote(&tickers_map, &orders);
         assert!(result.is_some());
         let size = result.unwrap();
         assert_eq!(17515.71297, size)
@@ -135,7 +137,7 @@ mod tests {
             (Arc::clone(&usdt_try), OrderSide::Buy),
         ];
 
-        let result = max_chain_amount_quote(&tickers_map, &orders, 0.000);
+        let result = max_chain_amount_quote(&tickers_map, &orders);
         assert!(result.is_some());
         let size = result.unwrap();
         assert_eq!(3484.05, size)

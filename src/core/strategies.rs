@@ -19,6 +19,11 @@ pub struct ArbStrategy {
     monitoring_only: bool,
     out_queue: Arc<ArrayQueue<DTO>>,
 
+    // cooldown
+    skips_until_cooldown: usize,
+    skips_in_a_row: usize,
+    cooldown_duration: Duration,
+
     // management
     managements_entities_errored_ids: HashMap<MonitoringEntity, HashSet<usize>>,
 }
@@ -36,9 +41,12 @@ impl ArbStrategy {
             orders_direction: vec![],
             managements_entities_errored_ids,
             out_queue,
+            skips_until_cooldown: 3,
+            skips_in_a_row: 0,
             exchange,
             monitoring_only,
-            sizing_config
+            sizing_config,
+            cooldown_duration: Duration::from_millis(5),
         }
     }
 
@@ -54,6 +62,19 @@ impl ArbStrategy {
         order.amount_quote = round(amount_quote, order.instrument.price_precision, RoundingMode::Down);
         order.client_order_id = Uuid::new_v4().to_string();
         order
+    }
+
+    fn skip(&mut self) {
+        if self.skips_in_a_row == self.skips_until_cooldown {
+            self.skips_in_a_row = 0;
+            self.cooldown();
+        } else {
+            self.skips_in_a_row += 1;
+        }
+    }
+
+    fn cooldown(&mut self) {
+        self.next_check_ts = time() + self.cooldown_duration.as_nanos();
     }
 }
 
@@ -153,6 +174,7 @@ impl PriceTickerListener for ArbStrategy {
                         self.orders_direction.push(dir);
                     } else {
                         self.orders_direction.clear();
+                        self.skip();
                         return;
                     }
                 }
@@ -169,6 +191,7 @@ impl PriceTickerListener for ArbStrategy {
                 } else {
                     log::warn!("No initial order size");
                     self.orders_direction.clear();
+                    self.skip();
                     return;
                 }
 
@@ -176,10 +199,8 @@ impl PriceTickerListener for ArbStrategy {
                     self.orders_direction.clear();
                 }
             }
-
+            self.cooldown();
         }
-
-        self.next_check_ts = time() + Duration::from_millis(5).as_nanos();
     }
 }
 
