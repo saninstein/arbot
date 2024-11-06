@@ -15,7 +15,7 @@ pub fn parse_f64_field(data: &JsonValue, field: &str) -> f64 {
         .as_str()
         .expect(&format!("Missing '{field}' field or not a string"))
         .parse()
-        .expect(&format!("Field '{field}' can't parse to the f64"))
+        .expect(&format!("Field '{field}' can't parse to the f64: {data:?}"))
 }
 
 pub fn init_logger() {

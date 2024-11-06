@@ -41,8 +41,8 @@ impl InstrumentsMap {
                 taker_fee: raw["taker_fee"].as_f64().unwrap(),
             });
             exchange_map.insert(symbol.clone(), Arc::clone(&instrument));
-            exchange_map.insert(format!("{base}/{quote}"), Arc::clone(&instrument));
-            exchange_map.insert(format!("{base}{quote}"), Arc::clone(&instrument));
+            exchange_map.insert(format!("{base}/{quote}").to_uppercase(), Arc::clone(&instrument));
+            exchange_map.insert(format!("{base}{quote}").to_uppercase(), Arc::clone(&instrument));
             exchange_map.insert(format!("{base}/{quote}").to_lowercase(), Arc::clone(&instrument));
             exchange_map.insert(format!("{base}{quote}").to_lowercase(), Arc::clone(&instrument));
         }

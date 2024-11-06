@@ -66,8 +66,9 @@ impl ArbStrategy {
 
     fn skip(&mut self) {
         if self.skips_in_a_row == self.skips_until_cooldown {
+            log::warn!("Skip triggered");
             self.skips_in_a_row = 0;
-            self.cooldown();
+            self.cooldown_with_duration(Duration::from_secs(3));
         } else {
             self.skips_in_a_row += 1;
         }
@@ -76,6 +77,11 @@ impl ArbStrategy {
     fn cooldown(&mut self) {
         self.next_check_ts = time() + self.cooldown_duration.as_nanos();
     }
+
+    fn cooldown_with_duration(&mut self, duration: Duration) {
+        self.next_check_ts = time() + duration.as_nanos();
+    }
+
 }
 
 impl OrderListener for ArbStrategy {
@@ -188,6 +194,7 @@ impl PriceTickerListener for ArbStrategy {
                             )
                         );
                     }
+                    self.skips_in_a_row = 0;
                 } else {
                     log::warn!("No initial order size");
                     self.orders_direction.clear();

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::slice::Iter;
 use std::sync::{Arc, LazyLock};
-use crate::core::dto::Exchange::{Binance, Bit2me};
+use crate::core::dto::Exchange::{Binance, Bit2me, Mexc};
 
 static BLANK_STR: LazyLock<String> = LazyLock::new(|| "".to_string());
 
@@ -61,19 +61,21 @@ impl PriceTicker {
 pub enum Exchange {
     Any,
     Binance,
-    Bit2me
+    Bit2me,
+    Mexc
 }
 
 impl Exchange {
     pub fn iterator() -> Iter<'static, Exchange> {
-        static EXCHANGES: [Exchange; 2] = [Binance, Bit2me];
+        static EXCHANGES: [Exchange; 3] = [Exchange::Binance, Exchange::Bit2me, Exchange::Mexc];
         EXCHANGES.iter()
     }
 
     pub fn from_str(exchange: &str) -> Exchange {
         match exchange {
-            "binance" => Exchange::Binance,
-            "bit2me" => Exchange::Bit2me,
+            "binance" => Binance,
+            "bit2me" => Bit2me,
+            "mexc" => Mexc,
             "any" => Exchange::Any,
             _ => panic!("Unknown exchange: {exchange}")
         }

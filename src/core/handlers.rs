@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use crate::core::dto::{Exchange, MonitoringEntity, MonitoringMessage, MonitoringStatus};
 use crate::{
@@ -33,7 +33,8 @@ impl PriceTickerFilter {
 
 impl PriceTickerListener for PriceTickerFilter {
     fn on_price_ticker(&mut self, price_ticker: &PriceTicker, _: &HashMap<Exchange, HashMap<Arc<Instrument>, PriceTicker>>) {
-        match self.tickers_map.get(&price_ticker.instrument.exchange).unwrap().get(&price_ticker.instrument) {
+        let exchange = &price_ticker.instrument.exchange;
+        match self.tickers_map.get(exchange).expect(&format!("No exchange: {exchange:?}")).get(&price_ticker.instrument) {
             Some(p) => {
                 if !p.is_prices_equals(price_ticker) {
                     self.update_and_notify_listeners(price_ticker)
@@ -50,7 +51,12 @@ impl MonitoringMessageListener for PriceTickerFilter {
     fn on_monitoring_message(&mut self, message: &MonitoringMessage) {
         match message.entity {
             MonitoringEntity::PriceTicker => match message.status {
-                MonitoringStatus::Error => self.tickers_map.clear(),
+                MonitoringStatus::Error => {
+                    self.tickers_map.clear();
+                    for exchange in Exchange::iterator() {
+                        self.tickers_map.insert((*exchange).clone(), HashMap::default());
+                    }
+                },
                 _ => {}
             }
             _ => {}
