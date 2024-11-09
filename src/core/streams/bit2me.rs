@@ -12,7 +12,7 @@ use crate::core::{
     map::InstrumentsMap,
     utils::{time},
 };
-use crate::core::dto::{Exchange, MonitoringEntity, MonitoringMessage, MonitoringStatus, DTO};
+use crate::core::dto::{Exchange, MonitoringEntity, MonitoringMessage, MonitoringStatus, DTO, TICKER_PRICE_NOT_CHANGED};
 
 #[allow(dead_code)]
 pub struct PriceTickerStream {
@@ -234,20 +234,37 @@ impl PriceTickerStream {
         }
     }
 
-
     fn parse_price_ticker(&mut self, ts: u128, raw: &str) -> Option<DTO> {
         let data = &json::parse(raw).expect("Can't parse json")["data"];
         let symbol = data["symbol"].as_str().expect("No symbol");
         let instrument_arc = self.instruments_map.get(&Exchange::Bit2me, symbol).expect(&format!("No instrument: {symbol}"));
         let bid = &data["bids"][0];
         let ask = &data["asks"][0];
+        let bid_price;
+        let bid_amount;
+        let ask_price;
+        let ask_amount;
+        if bid.is_empty() {
+            bid_price = TICKER_PRICE_NOT_CHANGED;
+            bid_amount = TICKER_PRICE_NOT_CHANGED;
+        } else {
+            bid_price = bid[0].as_f64()?;
+            bid_amount = bid[1].as_f64()?;
+        }
+        if ask.is_empty() {
+            ask_price = TICKER_PRICE_NOT_CHANGED;
+            ask_amount = TICKER_PRICE_NOT_CHANGED;
+        } else {
+            ask_price = ask[0].as_f64()?;
+            ask_amount = ask[1].as_f64()?;
+        }
         Some(DTO::PriceTicker(PriceTicker {
             timestamp: ts,
             instrument: Arc::clone(instrument_arc),
-            bid: bid[0].as_f64()?,
-            bid_amount: bid[1].as_f64()?,
-            ask: ask[0].as_f64()?,
-            ask_amount: ask[1].as_f64()?,
+            bid: bid_price,
+            bid_amount: bid_amount,
+            ask: ask_price,
+            ask_amount: ask_amount,
         }))
     }
 

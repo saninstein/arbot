@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use crate::core::dto::{Exchange, MonitoringEntity, MonitoringMessage, MonitoringStatus};
 use crate::{
@@ -22,26 +22,27 @@ impl PriceTickerFilter {
         Self { tickers_map, listeners }
     }
 
-    fn update_and_notify_listeners(&mut self, price_ticker: &PriceTicker) {
+    fn update(&mut self, price_ticker: &PriceTicker) -> bool {
+        let mut result = true;
         let exchange_tickers_map = self.tickers_map.get_mut(&price_ticker.instrument.exchange).unwrap();
-        exchange_tickers_map.insert(Arc::clone(&price_ticker.instrument), price_ticker.copy());
-        for listener in self.listeners.iter_mut() {
-            listener.on_price_ticker(price_ticker, &self.tickers_map);
-        }
+        match exchange_tickers_map.get(&price_ticker.instrument) {
+            Some(p) => {
+                result = !p.is_prices_equals(price_ticker);
+                exchange_tickers_map.get_mut(&price_ticker.instrument).unwrap().update(price_ticker);
+            }
+            None => {
+                exchange_tickers_map.insert(Arc::clone(&price_ticker.instrument), price_ticker.copy());
+            }
+        };
+        result
     }
 }
 
 impl PriceTickerListener for PriceTickerFilter {
     fn on_price_ticker(&mut self, price_ticker: &PriceTicker, _: &HashMap<Exchange, HashMap<Arc<Instrument>, PriceTicker>>) {
-        let exchange = &price_ticker.instrument.exchange;
-        match self.tickers_map.get(exchange).expect(&format!("No exchange: {exchange:?}")).get(&price_ticker.instrument) {
-            Some(p) => {
-                if !p.is_prices_equals(price_ticker) {
-                    self.update_and_notify_listeners(price_ticker)
-                }
-            }
-            None => {
-                self.update_and_notify_listeners(price_ticker)
+        if self.update(price_ticker) {
+            for listener in self.listeners.iter_mut() {
+                listener.on_price_ticker(price_ticker, &self.tickers_map);
             }
         }
     }
@@ -61,14 +62,5 @@ impl MonitoringMessageListener for PriceTickerFilter {
             }
             _ => {}
         }
-    }
-}
-
-#[allow(dead_code)]
-struct DummyPriceTickerListener {}
-
-impl PriceTickerListener for DummyPriceTickerListener {
-    fn on_price_ticker(&mut self, price_ticker: &PriceTicker, _: &HashMap<Exchange, HashMap<Arc<Instrument>, PriceTicker>>) {
-        log::info!("Dummy listener: {price_ticker:?}")
     }
 }

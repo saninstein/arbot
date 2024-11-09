@@ -370,14 +370,14 @@ impl BinanceFixConnection {
     pub fn execution_report_to_order(msg: Message<&[u8]>, instruments_map: &Arc<InstrumentsMap>) -> Order {
         let mut order = Order::new();
 
-        match msg.get(fix44::ORIG_CL_ORD_ID) {
+        match msg.get(fix44::CL_ORD_ID) {
             Ok(value) => {
                 order.client_order_id = String::from_utf8_lossy(value).to_string();
             }
             Err(FieldValueError::Missing) => {
-                log::warn!("fix44::ORIG_CL_ORD_ID missed");
+                log::warn!("fix44::CL_ORD_ID missed");
             }
-            _ => panic!("fix44::ORIG_CL_ORD_ID err")
+            _ => panic!("fix44::CL_ORD_ID err")
         }
 
         match msg.get(fix44::ORDER_ID) {
@@ -400,14 +400,14 @@ impl BinanceFixConnection {
             _ => panic!("fix44::ORDER_QTY")
         }
 
-        match msg.get(fix44::CASH_ORDER_QTY) {
+        match msg.get(25017) {
             Ok(value) => {
                 order.amount_quote = value;
             }
             Err(FieldValueError::Missing) => {
-                log::warn!("fix44::CASH_ORDER_QTY missed");
+                log::warn!("25017:CumQuoteQty missed");
             }
-            _ => panic!("fix44::CASH_ORDER_QTY")
+            _ => panic!("25017:CumQuoteQty")
         }
 
 

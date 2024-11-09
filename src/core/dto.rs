@@ -5,6 +5,8 @@ use std::sync::{Arc, LazyLock};
 use crate::core::dto::Exchange::{Binance, Bit2me, Mexc};
 
 static BLANK_STR: LazyLock<String> = LazyLock::new(|| "".to_string());
+pub const TICKER_PRICE_NOT_CHANGED: f64 = -100.;
+
 
 static BLANK_INSTRUMENT: LazyLock<Arc<Instrument>> = LazyLock::new(|| Arc::new(Instrument {
     exchange: Exchange::Any,
@@ -42,7 +44,22 @@ impl PriceTicker {
     }
 
     pub fn is_prices_equals(&self, other: &Self) -> bool {
-        other.bid == self.bid && other.ask == self.ask
+        (other.bid == TICKER_PRICE_NOT_CHANGED || other.bid == self.bid) && (
+            other.ask == TICKER_PRICE_NOT_CHANGED || other.ask == self.ask
+        )
+    }
+
+    pub fn update(&mut self, another: &PriceTicker) {
+        self.timestamp = another.timestamp;
+        if another.bid != TICKER_PRICE_NOT_CHANGED {
+            self.bid = another.bid;
+            self.bid_amount = another.bid_amount;
+        }
+
+        if another.ask != TICKER_PRICE_NOT_CHANGED {
+            self.ask = another.ask;
+            self.ask_amount = another.ask_amount;
+        }
     }
 
     pub fn copy(&self) -> Self {

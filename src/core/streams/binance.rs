@@ -15,6 +15,8 @@ use crate::core::{
 };
 use crate::core::dto::{Exchange, MonitoringEntity, MonitoringMessage, MonitoringStatus, DTO};
 
+pub type Res = Result<(), Box<dyn std::error::Error>>;
+
 #[allow(dead_code)]
 pub struct PriceTickerStream {
     entity_id: usize,
@@ -57,8 +59,8 @@ impl PriceTickerStream {
         }
     }
 
-    fn connect(&mut self) {
-        let (mut socket, response) = connect("wss://stream.binance.com:9443/ws").expect("Can't connect");
+    fn connect(&mut self) -> Res {
+        let (mut socket, response) = connect("wss://stream.binance.com:9443/ws")?;
         // let (mut socket, response) = connect("wss://testnet.binance.vision/ws").expect("Can't connect");
         log::info!("Connected to the server. Response HTTP code: {}", response.status());
 
@@ -72,9 +74,13 @@ impl PriceTickerStream {
             _ => unimplemented!()
         }
 
-        assert!((100..400).contains(&response.status().as_u16()));
+        if !(100..400).contains(&response.status().as_u16()) {
+            return Err(response.status().as_str().into());
+        }
+
         self.request_id = 0;
         self.socket = Some(socket);
+        Ok(())
     }
 
     pub fn ticker_to_channel(ticker: &String) -> String {
@@ -139,20 +145,49 @@ impl PriceTickerStream {
         }).expect("Failed to spawn price ticker thread");
     }
 
-    fn send_json(&mut self, data: JsonValue) {
-        let mut ts = self.request_latest_ts.write().expect("Can't get the lock");
-        self.socket.as_mut().unwrap().send(Message::Text(json::stringify(data))).expect("Can't send the data");
+    fn send_json(&mut self, data: JsonValue) -> Res {
+        let mut ts = self.request_latest_ts.write().unwrap();
+        self.socket.as_mut().unwrap().send(Message::Text(json::stringify(data)))?;
         thread::sleep(Duration::from_millis(250));
         *ts = time();
+        Ok(())
     }
 
     fn run(&mut self) {
-        let mut reconnect_sleep = 0;
+        let mut reconnect_sleep = 5;
+
+        let retry_shots = 5;
         loop {
-            self.connect();
-            self.subscribe();
-            log::info!("Subscription done");
-            self.handle();
+            for i in 0..reconnect_sleep + 1 {
+                match self.connect() {
+                    Ok(_) => {
+                        break;
+                    }
+                    Err(_) => {
+                        if i == retry_shots {
+                            panic!("Failed to reconnect stream");
+                        }
+                        log::warn!("Failed to reconnect stream. Retry {i}/{retry_shots}");
+                        thread::sleep(Duration::from_millis(1000));
+                    }
+                }
+            }
+            match self.subscribe() {
+                Ok(_) => {
+                    log::info!("Subscription done");
+                    match self.handle() {
+                        Err(err) => {
+                            log::error!("Error handling messages: {}", err);
+                        },
+                        _ => {
+                            log::warn!("Handling messages stopped");
+                        }
+                    };
+                }
+                Err(err) => {
+                    log::error!("Subscription failed: {}", err);
+                }
+            };
             self.close_socket();
             self.queue.push(
                 DTO::MonitoringMessage(MonitoringMessage::new(
@@ -162,33 +197,20 @@ impl PriceTickerStream {
                 ))
             ).expect("Can't push error message");
 
-            reconnect_sleep += 15;
+            reconnect_sleep += 5;
             log::warn!("Reconnect stream in {reconnect_sleep}s...");
-            thread::sleep(Duration::from_secs(reconnect_sleep));
+            thread::sleep(Duration::from_secs(reconnect_sleep.max(30)));
         }
     }
 
-    fn handle_ping(&mut self, ts: u128, ping_payload: Vec<u8>) -> bool {
-        let ts_ms_their: u128 = String::from_utf8_lossy(&ping_payload).parse().unwrap();
-        let ts_ms_our: u128 = Duration::from_nanos(ts as u64).as_millis();
-        let lag = if ts_ms_our > ts_ms_their {
-            ts_ms_our - ts_ms_their
-        } else {
-            0
-        };
-
+    fn handle_ping(&mut self, ts: u128, ping_payload: Vec<u8>) -> Res {
         let price_ticker_lag = Duration::from_nanos((ts - self.latest_ticker_ts) as u64).as_millis();
-        log::info!("Ping received  their: {} our: {} lag: {}ms. Latest ticker {}ms", ts_ms_their, ts_ms_our, lag, price_ticker_lag);
-        match self.socket.as_mut().unwrap().send(Message::Pong(ping_payload)) {
-            Ok(_) => return true,
-            Err(err) => {
-                log::error!("Can't flush socket: {}", err);
-                return false;
-            }
-        };
+        log::info!("Ping received. Latest ticker {}ms", price_ticker_lag);
+        self.socket.as_mut().unwrap().send(Message::Pong(ping_payload))?;
+        Ok(())
     }
 
-    fn subscribe(&mut self) {
+    fn subscribe(&mut self) -> Res {
         for (i, items) in self.channels.clone()
             .chunks(self.channels_per_request)
             .into_iter()
@@ -198,7 +220,7 @@ impl PriceTickerStream {
             self.send_message_and_handle(
                 object! {method: "SUBSCRIBE", params: items},
                 |_, data: JsonValue| assert!(data["result"].is_null()),
-            );
+            )?;
             log::info!("Subscribed the batch: {i}");
         }
 
@@ -213,12 +235,12 @@ impl PriceTickerStream {
                     ),
                     HashSet::from_iter(this.channels.clone()),
                 ),
-        );
-        log::info!("Subs checked")
+        )?;
+        Ok(())
     }
 
-    fn handle_raw_price_ticker(&mut self, ts: u128, raw: String) {
-        let data = &json::parse(&raw).expect("Can't parse json");
+    fn handle_raw_price_ticker(&mut self, ts: u128, raw: String) -> Res {
+        let data = &json::parse(&raw)?;
         let symbol = data["s"].as_str().expect("No symbol");
         let instrument_arc = self.instruments_map.get(&Exchange::Binance, symbol).expect(&format!("No instrument: {symbol}"));
         let price_ticker = DTO::PriceTicker(PriceTicker {
@@ -231,32 +253,28 @@ impl PriceTickerStream {
         });
 
         self.queue.push(price_ticker).expect("Can't add price ticker to queue");
+        Ok(())
     }
 
-    fn handle(&mut self) {
+    fn handle(&mut self) -> Res {
         loop {
-            let result = self.socket.as_mut().unwrap().read();
+            let msg = self.socket.as_mut().unwrap().read()?;
             let ts = time();
-
-            match result {
-                Ok(msg) => match msg {
-                    Message::Text(raw) => {
-                        // log::info!("Received message: {raw}");
-                        self.latest_ticker_ts = ts;
-                        self.handle_raw_price_ticker(ts, raw);
-                    }
-                    Message::Ping(payload) => {
-                        if !self.handle_ping(ts, payload) {
-                            return;
-                        }
-                    }
-                    msg => log::warn!("Unexpected msg: {msg}")
+            match msg {
+                Message::Text(raw) => {
+                    // log::info!("Received message: {raw}");
+                    self.latest_ticker_ts = ts;
+                    self.handle_raw_price_ticker(ts, raw)?;
                 }
-                Err(err) => {
-                    log::error!("Can't read socket: {}", err);
-                    return;
+                Message::Ping(payload) => {
+                    self.handle_ping(ts, payload)?;
                 }
-            };
+                Message::Close(reason) => {
+                    log::warn!("Got the close frame: {reason:?}");
+                    return Ok(());
+                }
+                msg => log::warn!("Unexpected msg: {msg}")
+            }
         }
     }
 
@@ -279,10 +297,10 @@ impl PriceTickerStream {
         id
     }
 
-    fn send_message_and_handle(&mut self, mut data: JsonValue, result_handler: fn(&PriceTickerStream, JsonValue)) {
+    fn send_message_and_handle(&mut self, mut data: JsonValue, result_handler: fn(&PriceTickerStream, JsonValue)) -> Res {
         let id = self.next_id();
-        data.insert("id", id).expect("Can't insert data");
-        self.send_json(data);
+        data.insert("id", id)?;
+        self.send_json(data)?;
         loop {
             let msg = self.socket.as_mut().unwrap().read();
             match msg {
@@ -292,15 +310,13 @@ impl PriceTickerStream {
                         // log::info!("Got the result: {}", a);
                         let data = json::parse(&a).expect("Can't parse json");
                         let got_id = data["id"].as_usize().unwrap();
-                        assert!(id == got_id);
+                        assert_eq!(id, got_id);
                         result_handler(self, data);
-                        return;
+                        return Ok(());
                     }
                 }
                 Ok(Message::Ping(payload)) => {
-                    if !self.handle_ping(time(), payload) {
-                        return;
-                    }
+                    self.handle_ping(time(), payload)?;
                 },
                 Err(err) => {
                     match err {
@@ -309,11 +325,11 @@ impl PriceTickerStream {
                         Error::Io(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                             // thread::sleep(Duration::from_millis(100));
                         },
-                        _ => panic!("{}", err),
+                        _ => return Err(err.into()),
                     }
                 }
 
-                _ => log::warn!("Unexpected msg type")
+                t => log::warn!("Unexpected msg type: {t:?}")
             }
         }
     }

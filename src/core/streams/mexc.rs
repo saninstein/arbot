@@ -10,9 +10,9 @@ use tungstenite::{connect, Error, Message, WebSocket};
 use crate::core::{
     dto::PriceTicker,
     map::InstrumentsMap,
-    utils::{parse_f64_field, time},
+    utils::{time},
 };
-use crate::core::dto::{Exchange, MonitoringEntity, MonitoringMessage, MonitoringStatus, DTO};
+use crate::core::dto::{Exchange, MonitoringEntity, MonitoringMessage, MonitoringStatus, DTO, TICKER_PRICE_NOT_CHANGED};
 
 #[allow(dead_code)]
 pub struct PriceTickerStream {
@@ -205,20 +205,49 @@ impl PriceTickerStream {
         // log::info!("Subs checked")
     }
 
-    fn handle_raw_price_ticker(&mut self, ts: u128, raw: String) {
+    fn parse_price_ticker(&mut self, ts: u128, raw: &str) -> Option<DTO> {
         let data = &json::parse(&raw).expect("Can't parse json");
         let symbol = data["s"].as_str().expect(&format!("No symbol: {raw}"));
         let instrument_arc = self.instruments_map.get(&Exchange::Mexc, symbol).expect(&format!("No instrument: {symbol}"));
         let ticker_data = &data["d"];
-        let price_ticker = DTO::PriceTicker(PriceTicker {
+
+        let bid = &ticker_data["b"].as_str()?;
+        let ask = &ticker_data["a"].as_str()?;
+
+        let bid_price;
+        let bid_amount;
+        let ask_price;
+        let ask_amount;
+        if bid.is_empty() {
+            bid_price = TICKER_PRICE_NOT_CHANGED;
+            bid_amount = TICKER_PRICE_NOT_CHANGED;
+        } else {
+            bid_price = bid.parse().unwrap();
+            bid_amount = ticker_data["B"].as_str()?.parse().unwrap();
+        }
+        if ask.is_empty() {
+            ask_price = TICKER_PRICE_NOT_CHANGED;
+            ask_amount = TICKER_PRICE_NOT_CHANGED;
+        } else {
+            ask_price = ask.parse().unwrap();
+            ask_amount = ticker_data["A"].as_str()?.parse().unwrap();
+        }
+        Some(DTO::PriceTicker(PriceTicker {
             timestamp: ts,
             instrument: Arc::clone(instrument_arc),
-            bid: parse_f64_field(ticker_data, "b"),
-            bid_amount: parse_f64_field(ticker_data, "B"),
-            ask: parse_f64_field(ticker_data, "a"),
-            ask_amount: parse_f64_field(ticker_data, "A"),
-        });
-        self.queue.push(price_ticker).expect("Can't add price ticker to queue");
+            bid: bid_price,
+            bid_amount: bid_amount,
+            ask: ask_price,
+            ask_amount: ask_amount,
+        }))
+    }
+
+    fn handle_raw_price_ticker(&mut self, ts: u128, raw: String) {
+        if let Some(price_ticker) = self.parse_price_ticker(ts, &raw) {
+            self.queue.push(price_ticker).expect("Can't add price ticker to queue");
+        } else {
+            panic!("Can't parse price ticker: {raw}");
+        }
     }
 
     fn handle(&mut self) {

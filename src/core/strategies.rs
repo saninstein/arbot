@@ -16,6 +16,7 @@ pub struct ArbStrategy {
 
     sizing_config: SizingConfig,
     orders_direction: Vec<(Arc<Instrument>, OrderSide)>,
+    tickers: HashMap<Arc<Instrument>, PriceTicker>,
     monitoring_only: bool,
     out_queue: Arc<ArrayQueue<DTO>>,
 
@@ -47,6 +48,7 @@ impl ArbStrategy {
             monitoring_only,
             sizing_config,
             cooldown_duration: Duration::from_millis(5),
+            tickers: HashMap::default(),
         }
     }
 
@@ -54,12 +56,19 @@ impl ArbStrategy {
         self.out_queue.push(DTO::Order(order)).unwrap()
     }
 
-    fn create_order_from_direction(&self, amount: f64, amount_quote: f64) -> Order {
+    fn create_order_from_direction(&self, mut amount: f64, amount_quote: f64) -> Order {
         let mut order = Order::new();
         order.instrument = Arc::clone(&self.orders_direction[0].0);
         order.side = self.orders_direction[0].1.clone();
+        if amount == 0. {
+            let price_ticker = self.tickers.get(&order.instrument).unwrap();
+            amount = amount_quote / if order.side == OrderSide::Buy {
+                price_ticker.ask
+            } else {
+                price_ticker.bid
+            };
+        }
         order.amount = round(amount, order.instrument.amount_precision, RoundingMode::Down);
-        order.amount_quote = round(amount_quote, order.instrument.price_precision, RoundingMode::Down);
         order.client_order_id = Uuid::new_v4().to_string();
         order
     }
@@ -91,14 +100,15 @@ impl OrderListener for ArbStrategy {
         }
         log::info!("Order received {order:?}");
         if self.orders_direction.is_empty() {
-            panic!("Unexpected order");
+            log::warn!("Unexpected order");
+            return;
         }
 
         if !(order.instrument == self.orders_direction[0].0 && order.side == self.orders_direction[0].1) {
             panic!("Missmatch order");
         }
 
-        match order.status {
+        match &order.status {
             OrderStatus::Error => {
                 panic!("Errored order status");
             },
@@ -107,20 +117,29 @@ impl OrderListener for ArbStrategy {
                 self.orders_direction.remove(0);
                 if self.orders_direction.is_empty() {
                     log::info!("Filled orders directions");
+                    // panic!("The good one.");
                     return;
                 }
 
                 let (amount, amount_quote) = if order.instrument.base == self.orders_direction[0].0.base {
-                    (order.amount, 0.)
+                    (order.amount_filled, 0.)
+                } else if order.instrument.base == self.orders_direction[0].0.quote {
+                    (0., order.amount_filled)
+                } else if order.instrument.quote == self.orders_direction[0].0.base {
+                    (order.amount_quote, 0.)
+                } else if order.instrument.quote == self.orders_direction[0].0.quote{
+                    (0., order.amount_quote)
                 } else {
-                    (0., order.amount)
+                    panic!("Invalid sequence: {:?}", self.orders_direction[0]);
                 };
 
                 self.push_order(
                     self.create_order_from_direction(amount, amount_quote)
                 );
             }
-            _ => {}
+            t => {
+                log::info!("Unexpected order status: {t:?}");
+            }
         };
     }
 }
@@ -162,6 +181,7 @@ impl PriceTickerListener for ArbStrategy {
         if !self.managements_entities_errored_ids[&MonitoringEntity::PriceTicker].is_empty() {
             return; // we have the broken price ticker stream, since we reset graph might be ok.
         }
+        let price_ticker = tickers_map.get(&price_ticker.instrument).unwrap();
 
         self.graph.update(price_ticker);
 
@@ -169,11 +189,18 @@ impl PriceTickerListener for ArbStrategy {
             return; // we have the broken OMS.
         }
 
+        if !self.orders_direction.is_empty() {  // processing of the path
+            if self.tickers.contains_key(&price_ticker.instrument) {
+                self.tickers.get_mut(&price_ticker.instrument).unwrap().update(price_ticker);
+            }
+            return;
+        }
+
         if self.next_check_ts > time() {
             return;
         }
 
-        if self.orders_direction.is_empty() && self.graph.contains_currency_data(&self.sizing_config.currency) {
+        if self.graph.contains_currency_data(&self.sizing_config.currency) {
             if let Some(path) = self.graph.find_arb_path(&self.sizing_config.currency, true) {
                 for window in path.windows(2) {
                     if let Some(dir) = self.graph.get_direction(&(window[0], window[1])) {
@@ -185,14 +212,22 @@ impl PriceTickerListener for ArbStrategy {
                     }
                 }
 
-                if let Some(amount_quote) = chain_amount_quote(&self.sizing_config, tickers_map, &self.orders_direction) {
+                if let Some(enter_amount) = chain_amount_quote(&self.sizing_config, tickers_map, &self.orders_direction) {
                     // send first order
                     if !self.monitoring_only {
-                        self.push_order(
-                            self.create_order_from_direction(
-                                0., amount_quote
-                            )
-                        );
+                        for (instrument, _) in &self.orders_direction {
+                            self.tickers.insert(
+                                Arc::clone(instrument), tickers_map.get(instrument).unwrap().copy()
+                            );
+                        }
+
+                        let enter_order;
+                        if &self.orders_direction[0].0.base.to_uppercase() == &self.sizing_config.currency.to_uppercase() {
+                            enter_order = self.create_order_from_direction(enter_amount, 0.);
+                        } else {
+                            enter_order = self.create_order_from_direction(0., enter_amount);
+                        }
+                        self.push_order(enter_order);
                     }
                     self.skips_in_a_row = 0;
                 } else {
