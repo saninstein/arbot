@@ -10,7 +10,7 @@ use core::api::PriceTickerListener;
 use core::handlers::PriceTickerFilter;
 use core::map::InstrumentsMap;
 use crate::core::api::MonitoringMessageListener;
-use crate::core::dto::{Exchange, MonitoringEntity, MonitoringMessage, MonitoringStatus, DTO};
+use crate::core::dto::{Exchange, MonitoringEntity, MonitoringMessage, MonitoringStatus, Order, OrderSide, DTO};
 use crate::core::oms::OMS;
 use crate::core::strategies::ArbStrategy;
 use crate::core::{streams};
@@ -96,6 +96,14 @@ fn main() {
         ".creds/binance.pem".to_string(),
         "7YPfVLXzckzQyMnWicLQiWEyhiOPJwGCLR27ErnbhsJUPKO3TnfT9N28YU9qePSX".to_string()
     );
+
+    // let mut order = Order::new();
+    // order.instrument = instruments_map.get(&Exchange::Binance, "ETHUSDT").unwrap().clone();
+    // order.amount = 0.006;
+    // order.side = OrderSide::Buy;
+    // order.client_order_id = "dummy".to_string();
+    //
+    // orders_queue.push(DTO::Order(order)).expect("Can't add order to queue");
 
     loop {
         match queue.pop() {

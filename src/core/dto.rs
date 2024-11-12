@@ -204,6 +204,25 @@ impl Order {
             error: "".to_string(),
         }
     }
+
+    pub fn fee(&self) -> f64 {
+        if self.fees.is_empty() {
+            0.0
+        } else {
+            self.fees[0].1
+        }
+    }
+
+    pub fn balance(&self) -> Option<(String, f64)> {
+        if self.status == OrderStatus::Filled {
+            match self.side {
+                OrderSide::Buy => Some((self.instrument.base.clone(), self.amount_filled - self.fee())),
+                OrderSide::Sell => Some((self.instrument.quote.clone(), self.amount_quote - self.fee()))
+            }
+        } else {
+            None
+        }
+    }
 }
 
 

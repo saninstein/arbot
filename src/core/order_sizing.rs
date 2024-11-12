@@ -20,7 +20,7 @@ impl SizingConfig {
         }
 
         if value > self.max_order_size {
-            return Some(self.max_order_size);
+            return Some(self.min_order_size);
         }
 
         Some(value)

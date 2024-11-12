@@ -121,14 +121,12 @@ impl OrderListener for ArbStrategy {
                     return;
                 }
 
-                let (amount, amount_quote) = if order.instrument.base == self.orders_direction[0].0.base {
-                    (order.amount_filled, 0.)
-                } else if order.instrument.base == self.orders_direction[0].0.quote {
-                    (0., order.amount_filled)
-                } else if order.instrument.quote == self.orders_direction[0].0.base {
-                    (order.amount_quote, 0.)
-                } else if order.instrument.quote == self.orders_direction[0].0.quote{
-                    (0., order.amount_quote)
+                let balance = order.balance().expect("Should be balance");
+
+                let (amount, amount_quote) = if balance.0 == self.orders_direction[0].0.base {
+                    (balance.1, 0.)
+                } else if balance.0 == self.orders_direction[0].0.quote {
+                    (0., balance.1)
                 } else {
                     panic!("Invalid sequence: {:?}", self.orders_direction[0]);
                 };

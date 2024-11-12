@@ -143,7 +143,7 @@ struct StreamTLS {
 
 impl StreamTLS {
     pub fn new() -> Self {
-        let hostname = "fix-oe.testnet.binance.vision";
+        let hostname = "fix-oe.binance.com";
         let port = 9000;
         let uri = format!("{hostname}:{port}");
         let root_store = RootCertStore {
