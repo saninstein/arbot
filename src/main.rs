@@ -2,7 +2,7 @@ mod core;
 mod draft;
 
 use std::sync::Arc;
-use std::{panic, process, thread};
+use std::{env, panic, process, thread};
 use std::collections::HashSet;
 use std::time::Duration;
 use crossbeam_queue::ArrayQueue;
@@ -15,6 +15,7 @@ use crate::core::oms::OMS;
 use crate::core::strategies::ArbStrategy;
 use crate::core::{streams};
 use crate::core::order_sizing::SizingConfig;
+use crate::core::price_ticker_collector::PriceTickerCollector;
 use crate::core::utils::{init_logger, read_tickers, time};
 
 
@@ -33,8 +34,8 @@ fn main() {
     let orders_queue = Arc::new(ArrayQueue::new(100_000));
 
     let instruments_map = Arc::new(InstrumentsMap::from_json("./data/spot_insts.json"));
-
-    let mut sockets = streams::binance::PriceTickerStream::listen_from_tickers_group(
+    let mut sockets;
+    sockets = streams::binance::PriceTickerStream::listen_from_tickers_group(
         Arc::clone(&queue),
         read_tickers("./data/tickers.json"),
         Arc::clone(&instruments_map),
@@ -43,29 +44,29 @@ fn main() {
 
     log::info!("Binance sockets: {sockets}");
 
-    // sockets = streams::bit2me::PriceTickerStream::listen_from_tickers_split(
-    //     Arc::clone(&queue),
-    //     HashSet::<String>::from_iter(
-    //         instruments_map.map.get(&Exchange::Bit2me).unwrap().values().map(|x| x.symbol.clone())
-    //     ).iter().map(|x| x.clone()).collect(),
-    //     Arc::clone(&instruments_map),
-    //     300,
-    //     1
-    // );
-    //
-    // log::info!("Bit2me sockets: {sockets}");
-    //
-    // sockets = streams::mexc::PriceTickerStream::listen_from_tickers_split(
-    //     Arc::clone(&queue),
-    //         HashSet::<String>::from_iter(
-    //             instruments_map.map.get(&Exchange::Mexc).unwrap().values().map(|x| x.symbol.clone())
-    //         ).iter().map(|x| x.clone()).collect(),
-    //     Arc::clone(&instruments_map),
-    //     30,
-    //     15
-    // );
-    //
-    // log::info!("Mexc sockets: {sockets}");
+    sockets = streams::bit2me::PriceTickerStream::listen_from_tickers_split(
+        Arc::clone(&queue),
+        HashSet::<String>::from_iter(
+            instruments_map.map.get(&Exchange::Bit2me).unwrap().values().map(|x| x.symbol.clone())
+        ).iter().map(|x| x.clone()).collect(),
+        Arc::clone(&instruments_map),
+        300,
+        1
+    );
+
+    log::info!("Bit2me sockets: {sockets}");
+
+    sockets = streams::mexc::PriceTickerStream::listen_from_tickers_split(
+        Arc::clone(&queue),
+            HashSet::<String>::from_iter(
+                instruments_map.map.get(&Exchange::Mexc).unwrap().values().map(|x| x.symbol.clone())
+            ).iter().map(|x| x.clone()).collect(),
+        Arc::clone(&instruments_map),
+        30,
+        15
+    );
+
+    log::info!("Mexc sockets: {sockets}");
 
     let empty_map = Default::default();
 
@@ -73,13 +74,14 @@ fn main() {
 
     let mut price_ticker_filter = PriceTickerFilter::new(
         vec![
+            // Box::new(PriceTickerCollector::new("/Users/alex/RustroverProjects/untitled/tickers.csv"))
             Box::new(ArbStrategy::new(Arc::clone(&orders_queue), Exchange::Binance, sizing_config.clone(), false)),
-            // Box::new(ArbStrategy::new(Arc::clone(&orders_queue), Exchange::Bit2me, sizing_config.clone(), true)),
-            // Box::new(ArbStrategy::new(Arc::clone(&orders_queue), Exchange::Mexc, sizing_config.clone(), true))
+            Box::new(ArbStrategy::new(Arc::clone(&orders_queue), Exchange::Bit2me, sizing_config.clone(), true)),
+            Box::new(ArbStrategy::new(Arc::clone(&orders_queue), Exchange::Mexc, sizing_config.clone(), true))
         ],
     );
 
-    // oms isn't up yet
+    // // oms isn't up yet
     queue.push(
         DTO::MonitoringMessage(MonitoringMessage::new(
             time(),
@@ -94,7 +96,7 @@ fn main() {
         Arc::clone(&queue),
         Arc::clone(&instruments_map),
         ".creds/binance.pem".to_string(),
-        "7YPfVLXzckzQyMnWicLQiWEyhiOPJwGCLR27ErnbhsJUPKO3TnfT9N28YU9qePSX".to_string()
+        env::var("API_KEY").unwrap()
     );
 
     // let mut order = Order::new();

@@ -116,7 +116,9 @@ impl OrderListener for ArbStrategy {
             OrderStatus::Filled => {
                 self.orders_direction.remove(0);
                 if self.orders_direction.is_empty() {
-                    log::info!("Filled orders directions");
+                    let profit = order.balance().unwrap().1 - self.sizing_config.min_order_size;
+                    let profit_pct = profit / self.sizing_config.min_order_size * 100.;
+                    log::info!("Filled orders directions profit: {profit} ({profit_pct}%)");
                     // panic!("The good one.");
                     return;
                 }
@@ -167,6 +169,9 @@ impl MonitoringMessageListener for ArbStrategy {
                 }
             }
         }
+        for (k, v) in self.managements_entities_errored_ids.iter() {
+            log::info!("Current management state: {k:?} {v:?}")
+        }
     }
 }
 
@@ -176,9 +181,9 @@ impl PriceTickerListener for ArbStrategy {
             return; // single exchange strategy
         }
         let tickers_map = tickers_map.get(&self.exchange).unwrap();
-        if !self.managements_entities_errored_ids[&MonitoringEntity::PriceTicker].is_empty() {
-            return; // we have the broken price ticker stream, since we reset graph might be ok.
-        }
+        // if !self.managements_entities_errored_ids[&MonitoringEntity::PriceTicker].is_empty() {
+        //     return; // we have the broken price ticker stream, since we reset graph might be ok.
+        // }
         let price_ticker = tickers_map.get(&price_ticker.instrument).unwrap();
 
         self.graph.update(price_ticker);

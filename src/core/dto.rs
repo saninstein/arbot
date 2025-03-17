@@ -97,6 +97,16 @@ impl Exchange {
             _ => panic!("Unknown exchange: {exchange}")
         }
     }
+
+    pub fn as_str(&self) -> &str {
+        match self {
+            Binance => "binance",
+            Bit2me => "bit2me",
+            Mexc => "mexc",
+            Exchange::Any => "any",
+            _ => panic!("Unknown exchange: {self:?}")
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -205,19 +215,28 @@ impl Order {
         }
     }
 
-    pub fn fee(&self) -> f64 {
-        if self.fees.is_empty() {
-            0.0
-        } else {
-            self.fees[0].1
-        }
-    }
+    // pub fn fee(&self) -> f64 {
+    //     if self.fees.is_empty() {
+    //         0.0
+    //     } else {
+    //         self.fees[0].1
+    //     }
+    // }
 
     pub fn balance(&self) -> Option<(String, f64)> {
+        // if self.status == OrderStatus::Filled {
+        //     match self.side {
+        //         OrderSide::Buy => Some((self.instrument.base.clone(), self.amount_filled - self.amount_filled*self.instrument.taker_fee)),
+        //         OrderSide::Sell => Some((self.instrument.quote.clone(), self.amount_quote - self.amount_quote*self.instrument.taker_fee)),
+        //     }
+        // } else {
+        //     None
+        // }
+        // bnb
         if self.status == OrderStatus::Filled {
             match self.side {
-                OrderSide::Buy => Some((self.instrument.base.clone(), self.amount_filled - self.fee())),
-                OrderSide::Sell => Some((self.instrument.quote.clone(), self.amount_quote - self.fee()))
+                OrderSide::Buy => Some((self.instrument.base.clone(), self.amount_filled)),
+                OrderSide::Sell => Some((self.instrument.quote.clone(), self.amount_quote)),
             }
         } else {
             None

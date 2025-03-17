@@ -9,3 +9,4 @@ pub mod strategies;
 pub mod oms;
 pub mod order_sizing;
 pub mod price_tickers_graph;
+pub mod price_ticker_collector;
