@@ -1,8 +1,8 @@
 # Trading engine
 
-It's dummy draft trading engine. My way of the exploring Rust.
+It's a dummy draft trading engine. 
+My way of the exploring Rust.
 Event-driven architecture.
-Inline-style:
 ![alt text](https://github.com/saninstein/arbot/raw/master/doc/tengine.jpg "Design")
 
 ## Strategies
